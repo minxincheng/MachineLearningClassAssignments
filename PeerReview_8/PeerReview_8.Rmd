@@ -1,0 +1,136 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+```{r}
+
+```
+
+```{r}
+teens <- read.csv("snsdata.csv")
+```
+
+```{r}
+str(teens)
+table(teens$gender, useNA = "ifany")
+summary(teens$age)
+```
+it doesn't make sense that age from 3 to age 106 are all in high school, therefore, only keep the age range 13 to 20, which is a reasonable range for high school student, all the others are set as missing data.
+
+```{r}
+teens$age <- ifelse(teens$age >= 13 & teens$age < 20, teens$age, NA)
+summary(teens$age)
+```
+Now the there is even more missing data. 
+
+A easy solution for missing values is to exclude any case with a missing value, however, that is not always a good way to deal with the data, by which will lose a large portions of the data. The subset left from the excluding will make the dataset very small, or even worse that is systematically different or non-representative of the full population.
+
+For gender (as a categorical variable), an alternative way is to create dummy coding for unknown gender
+```{r}
+teens$female <- ifelse(teens$gender == "F" & !is.na(teens$gender), 1, 0)
+teens$no_gender <- ifelse(is.na(teens$gender), 1, 0)
+
+table(teens$gender, useNA = "ifany")
+table(teens$female, useNA = "ifany")
+table(teens$no_gender, useNA = "ifany")
+```
+
+As age is a numeric variable, we will use a different strategy known as imputation, it fills in the missing data with a guess as to the true value. First can try the mean value.
+```{r}
+mean(teens$age)
+```
+However, it returns NA. It's due to that the mean is undefined for a vector containing missing data, can further try to remove the missing values.
+```{r}
+mean(teens$age, na.rm = TRUE)
+```
+It is indicating that the average student age in this dataset is 17 years old, but we need the average age for each graduation year. 
+```{r}
+# calculate mean age for each graduation year
+aggregate(data = teens, age ~ gradyear, mean, na.rm = TRUE)
+# same function, but returns a result with a equal length to the original data
+ave_age <- ave(teens$age, teens$gradyear, FUN = function(x) mean(x, na.rm = TRUE))
+```
+
+Impute these means onto the missing values
+```{r}
+teens$age <- ifelse(is.na(teens$age), ave_age, teens$age)
+summary(teens$age)
+```
+
+Train a model
+kmeans() function requires a data frame containing only numeric data and a parameter specifying the desired number of clusters. 
+```{r}
+# only consider 36 features
+interests <- teens[5:40]
+# perform z-score transformation to the dataset
+interests_z <- as.data.frame(lapply(interests, scale))
+```
+
+```{r}
+set.seed(2345)
+teen_clusters <- kmeans(interests_z, 5)
+```
+
+Obtain the size of kmeans() clusters
+```{r}
+teen_clusters$size
+```
+We can see here that the smallest cluster has 600 teenagers and the largest cluster has 21,514, indicating a large gap between the number of people in the largest and smallest clusters. We don't know if this is due to a real problem, or it is caused by the initial k-means cluster centers. We then examine the coordinates of the cluster centroids.
+```{r}
+teen_clusters$centers
+```
+The rows of the output refer to the five clusters, while the numbers across each row indicate the cluster's average value for the interest listed at the top of the column. From the table above, we can notice some patterns such as for cluster 4, almost all the sports-related values are positive, cluster 1 has obvious higher values in kissed, music, rock, clothes, and die. These are all making up assumptions about that clusters. Meanwhile, cluster 5 has almost all negative values across all variables, might indicate they created profiles on the website but never posted any interests.
+
+Improve model performance
+```{r}
+# add cluster information back to the original dataset
+teens$cluster <- teen_clusters$cluster
+```
+
+Then examine how the cluster assignment relates to individual characteristics. 
+```{r}
+# take first five cases as an example, check the relationship between cluster
+# and gender, age, and friends
+teens[1:5, c("cluster", "gender", "age", "friends")]
+# check average age in each cluster
+aggregate(data = teens, age ~ cluster, mean)
+# check gender proportion in each cluster
+aggregate(data = teens, female ~ cluster, mean)
+# check number of friends in each cluster
+aggregate(data = teens, friends ~ cluster, mean)
+```
+From the summary table, cluster 3 and cluster 1 has the most female students, refer back to the cluster centeroid table above, cluster 3 has relatively low value in all sports-related values and has relatively high values on hair, dress, dance, hot, and clothes-related variables, which makes sense if we think in a stereotypical way. Also as we mentioned before, cluster 4 has higher values in all sports-related variables and meanwhile has the lowest female proportion. The associations among group membership, gender, and number of friendes suggests that the clusters can be useful predictors.
+
+
+1.
+Support Vector Machine model creates a feature spaces, which is a finite-dimensional vector space, each dimension of which represents a "feature" of a particular object. In the context of spam or document classification, each "feature" is the prevalence or importance of a particular word.
+
+The goal of the SVM is to train a model that assigns new unseen objects into a particular category. It achieves this by creating a linear partition of the feature space into two categories。 Based on the features in the new unseen objects, it places an object "below" or "above" the separation plane, leading to a categorisation. This makes it an example of a non-probabilistic linear classifier.
+
+However, much of the benifit of SVMs comes from the fact that they are not restricted to being linear classifier. Utilising a technique known as the kernel trick they can become much more flexible by introducing various types of non-linear decision boundaries.
+
+Advantages
+High-Dimensionality: the SVM is an effective tool in high-dimensional spaces, which is particularly applicable to document classification and sentiment analysis where the dimensionality can be extremely large
+Memory efficiency: since only a subset of the training points are used in the actual decision process of assigning new members, only these points need to be stored in memory (and calculated upon) when aking decisions
+Versatility: class separation is often highly non-linear, the ability to apply new kernels allows substantial flexibility for the decision boundaries, leading to greater classification performance
+
+Random forest are tree-based methods that employ ensembling. It consists of a number of decision trees each trained on a random bootstrapped sample of both the observations and the features. In this way each tree is approximately decorrelated. Then at inference time a consensus vote is taken for classification or a mean for regression.
+
+Random Forest is intrinsically suited for multiclass problems, while SVM is intrinsically two-class. For multiclass problem you will need to reduce it into multiple binary classification problems. Random Forest works well with a mixture of numerical and categorical features. When features are on the various scales, it is also fine. Roughly speaking, with Random Forest you can use data as they are. SVM maximizes the "margin" and thus relies on the concept of "distance" between different points. It is up to you to decide if "distance" is meaningful. As a consequence, one-hot encoding for categorical features is a must-do. Further, min-max or other scaling is highly recommended at preprocessing step.
+
+For a classification problem Random Forest gives you probability of belonging to class. SVM gives you distance to the boundary, you still need to convert it to probability somehow if you need probability.For those problems, where SVM applies, it generally performs better than Random Forest. SVM gives you "support vectors", that is points in each class closest to the boundary between classes. They may be of interest by themselves for interpretation.
+
+It really depends what you want to achieve, what your data look like and etc. SVM will generally perform better on linear dependencies, otherwise you need nonlinear kernel and choice of kernel may change results. Also, SVM are less interpretable - for e.g if you want to explain why the classification was like it was - it will be non-trivial. Decision trees have better interpretability, they work faster and if you have categorical/numerical variables its fine, moreover: non-linear dependencies are handled well (given N large enough). Also they train faster than SVM in general, but they have tendency to overfit. I would also try Logistic Regression - great interpretable classifier)
+
+
+
+![ROC diagram](ROC.png)
+
+
+
+
+
+
+

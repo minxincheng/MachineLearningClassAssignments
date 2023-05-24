@@ -1,0 +1,250 @@
+---
+title: "PeerReview_5"
+author: Minxin Cheng
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+```{r}
+#install.packages("C50")
+#install.packages("RWeka")
+library(C50)
+library(gmodels)
+library(RWeka)
+```
+
+# Problem 1
+1. Read in data file
+```{r}
+credit <- read.csv("credit.csv")
+```
+
+2. Get the overall information of the dataset
+```{r}
+# check the structure of the dataset
+str(credit)
+# summary features see if there is anything stands out
+table(credit$checking_balance)
+table(credit$savins_balance)
+summary(credit$months_loan_duration)
+summary(credit$amount)
+table(credit$default)
+```
+
+3. Split data
+```{r}
+# randomly generate 900 numbers
+set.seed(123)
+train_sample <- sample(1000, 900)
+str(train_sample)
+# extract rows of sample number as train data, remaining data as test data
+credit_train <- credit[train_sample, ]
+credit_test <- credit[-train_sample, ]
+# check the propotion of the default column in both training and testing data
+prop.table(table(credit_train$default))
+prop.table(table(credit_test$default))
+```
+
+4. Make prediction
+```{r}
+# convert default column as factor
+credit_train$default <- as.factor(credit_train$default)
+# build the classifer
+credit_model <- C5.0(credit_train[-17], 
+                     credit_train$default)
+credit_model
+summary(credit_model)
+# make prediction
+credit_pred <- predict(credit_model, 
+                       credit_test)
+```
+
+5. Evaluate the prediction
+```{r}
+CrossTable(credit_test$default, 
+           credit_pred, 
+           prop.chisq = FALSE, 
+           prop.c = FALSE, 
+           prop.r = FALSE, 
+           dnn = c("actual default", "predicted default"))
+```
+As the table shows, 100 prediction were made. The accuracy is (55 + 13) / 100 = 0.68.
+
+6. Improve the model performance
+```{r}
+# boost the accuracy of the tree
+# the trials indicating the number of separate decision trees to use in the
+# boosted team.
+credit_boost10 <- C5.0(credit_train[-17], 
+                       credit_train$default, trials = 10)
+summary(credit_boost10)
+# make prediction
+credit_boost_pred10 <- predict(credit_boost10, 
+                               credit_test)
+```
+
+7. Evaluate the boosted prediction
+```{r}
+CrossTable(credit_test$default, 
+           credit_boost_pred10, 
+           prop.chisq = FALSE, 
+           prop.c = FALSE, 
+           prop.r = FALSE, 
+           dnn = c("actual default", "predicted default"))
+```
+As the table shows, the accuracy is (59 + 18) / 100 = 0.77 now, improved from before.
+
+8. Making mistakes more costlier than others
+```{r}
+# create matrix of different predictions
+matrix_dimensions <- list(c("1", "2"), 
+                          c("1", "2"))
+names(matrix_dimensions) <- c("predicted", 
+                              "actual")
+matrix_dimensions
+# give values to the matrix for penalty
+error_cost <- matrix(c(0, 1, 4, 0), 
+                     nrow = 2, 
+                     dimnames = matrix_dimensions)
+error_cost
+```
+
+9. Make predictions based on the penalty matrix
+```{r}
+# apply cost to decision tree using costs prameter
+credit_cost <- C5.0(credit_train[-17], 
+                    credit_train$default, 
+                    costs = error_cost)
+#summary(credit_cost)
+# make prediction
+credit_cost_pred <- predict(credit_cost, 
+                            credit_test)
+# evaluate the prediction
+CrossTable(credit_test$default, 
+           credit_cost_pred, 
+           prop.chisq = FALSE, 
+           prop.c = FALSE, 
+           prop.r = FALSE, 
+           dnn = c("actual default", "predicted default"))
+```
+As the table shows, the accuracy is (43 + 27) / 100 = 0.7. The overall accuracy dropped a bit. Compare to the boosted model, the false negative prediction increased and false positive decreased as we are giving false negative a higher cost.
+
+# Problem 2
+1. Read in data
+```{r}
+mushrooms <- read.csv("mushrooms.csv", stringsAsFactors = TRUE)
+```
+
+2. Get to know the data
+```{r}
+# check the structure
+str(mushrooms)
+# drop the veil type column
+mushrooms$veil_type <- NULL
+# check the proportion of mushroom types
+table(mushrooms$type)
+```
+
+3. Train the model
+```{r}
+# train the data using all features
+mushroom_1R <- OneR(type ~., data = mushrooms)
+mushroom_1R
+```
+
+4. Evaluate model performance
+```{r}
+summary(mushroom_1R)
+```
+As the matrix shows, there are 120 posionous mushrooms were classified as edible. 
+
+5. Improve model performance
+```{r}
+# apply RIPPEr rule to predict type
+mushroom_JRip <- JRip(type ~ ., data = mushrooms)
+mushroom_JRip
+```
+
+6. Evaluate RIPPER Rule learner
+```{r}
+summary(mushroom_JRip)
+```
+As the matrix, all mushrooms were classified correctly.
+
+# Problem 3
+## k-NN
+k-NN is a non-parametric method, it is a type of instance-based learning or lazy learning. It relies on distance for classification. When using k-NN as a classifier, it first calculates the distance between test data and each row of training data. Then based on the distance value, choose the top k rows from the sorted array, k is a user-defined value. Then it will assign a class to the test point based on the most frequent class of these rows. Given that the distance formula is dependent on how features are measured, it usually requires transformations of features to a standard range before applying the k-NN algorithm. Min-max normalization and z-score standardization are commonly used.
+
+k-NN is simple and effective. It makes no assumptions about the underlying data distribution and the training phase is fast. Therefore, it is great for dealing with "real world" data that most of which are not obeying the typical theoretical assumptions (e.g., linear regression), which also means very little or no prior knowledge about the distribution data is required. Based on these features, applications of k-NN could be: predict people's credit rating based on exisits credit rating database since people who have similar financial details would have similar credit ratings, or, classing a potential voter to "will vote"/"will not vote", or to "vote Democrat"/"vote Republican".
+
+However, k-NN is not ideal when: 1) If the dataset is big and the speed matters. Since it needs to calculate the distance for each data point; 2) If the dataset has a lot of missing data. It cannot define the distance if one or more attributes are missing; 3) if the dataset needs a clear interpretation or deeper understanding. It does not produce a model. Also as it is non-parametric, it has limited ability to understand how the features are related to the class, e.g. "why is this data point classified under this class?", or "what is the relationship between this attribute and the class distribution?". Moreover, it relies heavily on the selection of an appropriate k.
+
+## Naive Bayes
+The fundamental principle of Naive Bayes is Bayesian methods. Bayesian probability theory is based on the idea that the estimated likelihood of an event, or a potential outcome, should be based on the evidence at hand across multiple trials, or opportunities for the event to occur. Classifiers based on Bayesian methods such as Naive Bayes classifies an object by mapping its features with classifier individually then calculate the posterior probability to determine whether they are more likely to be. 
+
+Given its independence feature, it is typically applied to problems in which the information from numerous attributes should be considered simultaneously and it requires less training data and processing time. When the assumption of independence holds, a Naive Bayes classifier performs better compared to other models like logistic regression and you need less training data. Therefore, it is great for real-time prediction since it is sure fast; it is great for text classification/spam filtering and recommendation systems. Moreover, it is one of the classifiers that handle missing data very well: it simply excludes the attribute with missing data when computing posterior probability (i.e. probability of class given data point). 
+
+However, Naive Bayes is not ideal when: 1) There is no conditional independence. It assumes that all of the features in the dataset are equally important and independent. Not having independence in the data will have a highly negative influence on classification; 2) If the data's decision boundary is nonlinear/elliptic/parabolic. For the same independency reason and its assumptions on all the numeric attributes are normally distributed, it can only have linear, elliptic, or parabolic decision boundaries; 3) There is a lot of zero frequency. It will result in any new data point which contains a zero-frequency attribute will be always classified as the other class. This can be solved by using Laplace estimator, which ensures that each feature has a nonzero probability of occurring with each class; 4) Numerical data. It is not ideal for datasets with many numeric features, it estimated probabilities are less reliable than the predicted classes. For numerical variable, normal distribution is assumed.
+
+## C5.0 Decision Tree
+The decision tree utilizes a tree structure to model the relationships among the features and the potential outcomes. It is not necessarily exclusively for the learner's internal use. Entropy and information gain are two of the most important components that algorithms are using to make decisions of the splitting point. Entropy quantifies the randomness within a set of class values and information gain is the basic criterion to decide whether a feature should be used as a node to be split. The higher the information gain, the better a feature is at creating homogeneous groups after a split on this feature. 
+
+C5.0 algorithm is the most well-known implementation. After the model is created, many decision tree algorithms output the resulting structure in a human-readable format, which could provide insight into how and why the model works or doesn't work and it is also helpful to keep the transparency of the mechanism. It is an all-purpose classifier that does well on most problems, and it is a highly automatic learning process, which can handle numeric or nominal features, as well as missing data, meaning it requires less effort for data preparation. It excludes unimportant features and can be used on both small and large datasets, it results in a model that is intuitive and can be easily interpreted. It is more efficient than other complex models. 
+
+However, decision trees don't work well when: 1) There is a lot of uncorrelated variables in the data. Decision trees work by finding the interactions between variables; 2) The data has smooth boundaries. Decision trees work best when the data has a discontinuous piecewise-constant model, it doesn't work well with a linear target function. 3) When speed matters. Decision trees sometimes can go far more complex compared to other algorithms therefore they always involve higher time to train the model. They are relatively expensive as the complexity and time taken together. More importantly: 1) They are often biased toward splits on features having a large number of levels since each split in a tree leads to a reduced dataset; 2) It is easy to overfit or underfit the model; 3) Small changes in the training data can result in large changes to decision logic; 4) They can also have troubles modeling some relationships due to their axis-parallel splits. 
+
+## RIPPER Rules
+Classification rules represent knowledge in an if-else form logical rule that assigns a class to unlabeled examples, they are specified in terms of 1) antecedent, which comprises certain combinations of feature values, and 2) consequent, which specifies the class value to assign when the rule's conditions are met. 
+
+Rule learning algorithms start by finding rules that cover a subset of data, then separating additional subsets of the data until the entire dataset has been covered and no more examples remain. This process is usually slow when dealing with a large dataset, and they often prone to being inaccurate on noisy data. Incremental Reduced Error Pruning (IREP) was the first one tried to solve this problem by using a combination of pre-pruning and post-pruning methods that grow very complex rules and prune them before separating the instances from the full data set. RIPPER stands for Repeated Incremental Pruning to Produce Error Reduction which further improved upon IREP to generate rules that match or exceed the performance of decision trees. It first uses the separate and conquers technique to greedily add conditiions to a rule until it perfectly classifies a subset of data or runs out of attributes for splitting. Then the tree is pruned. The grow-prune cycle will be repeated until it reaches a stopping criterion, after which the entire set of the rules is optimized using a variety of heuristics.
+
+RIPPER Rule learners offer some advantages over trees for some tasks. 1) Rules are easy to interpret. A decision tree must be applied from top-to-bottom through a series of decisions, rules are propositions that can be read much like a statement of fact. 2) The predictions are fast. Since only a few binary statements need to be checked to determine which rules to apply; 3) Rules usually generate sparse models. They only select the relevant features for the model.
+Rule learners are generally applied to problems where the features are primarily or entirely nominal. They perform very well at idenrifying rare events, even if the rare event occurs only for a very specific interaction among feature values.
+
+However, RIPPER Rule learners also have their limitations that 1)It may result in rules that seem to defy common sense or expert knowledge; 2) It is not ideal for working with numeric data. Numeric features must be categorized; 3) It might not perform as well as more complex models.
+
+# Problem 4
+Ensemble methods combine the decisions from multiple models to improve the overall performance. The main causes of error in learning models are due to noise, bias, and variance. Ensemble methods help to minimize these factors. These methods are designed to improve the stability and accuracy of machine learning algorithms. As long as the base models are diverse and independent, the prediction error of the model decreases when the ensemble approach is used. Even though the ensemble model has multiple base models within the model, it acts and performs as a single model. 
+
+Ensemble methods are used in almost all machine learning scenarios to enhance the prediction abilities of the models. It provides more accurate prediction results and it provides a stable and more robust model as the aggregate result of multiple models is always less noisy than the individual models. However, it will also reduce the model interpret-ability due to increased complexity and makes it very difficult to draw any crucial business insights at the end. The computation and design time is also high, which is not good for real-time applications. The results can be also affected by the selections of models. 
+
+Simple ensemble technique first takes the most frequently occurring number found in a set of numbers, then average or weighted average of the predictions from all the models and use it to make the final prediction.
+
+Advanced ensemble techniques include bagging and boosting techniques. Bagging method first creates random samples of the training data with replacement, then build a model for each sample. Finally, the results of these multiple models are combined using average or majority voting. Since each model is exposed to a different subset, the combinations of their output will make sure that the problem of overfitting is taken care of by not clinging too closely to our training data set, meaning Bagging is helpful to reduce the variance error. 
+
+Boosting is sequential, the first algorithm is trained on the entire data set and the subsequent algorithms are built by fitting the residuals of the first algorithm, thus giving higher weight to those observations that were poorly predicted by the previous model. Therefore, it is actually creating a series of weak learners each of which might not be good for the entire data set but it is good for some part of the data set, each model will boost the performance of the ensemble. In gereral decreases the bias error and builds strong predictive models. It has shown better predictive accuracy than bagging but it also tends to overfit the data on the other hand.
+
+Compare Bagging and Boosting, they both use voting and combines models of the same type, but bagging uses individual models that are built separately and they are given equal weight, while in Boosting, each new model is influenced by the performance of those built previously and the weights a model's contribution by its performance.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

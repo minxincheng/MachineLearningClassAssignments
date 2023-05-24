@@ -1,0 +1,198 @@
+---
+title: "PeerReview_3_MinxinCheng"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+00. load packages
+```{r}
+#install.packages("class")
+#install.packages("gmodels")
+#install.packages("caret")
+
+library(class)
+library(gmodels)
+library(caret)
+library(pROC)
+```
+
+0. read in dataset
+```{r}
+pscData <- read.csv("prostate_cancer.csv", 
+                    stringsAsFactors = FALSE)
+```
+
+1. preparing the dataset
+1.1 check the dataset
+```{r}
+# check if the data is structured or not
+str(pscData)
+# remove the id column
+pscData <- pscData[-1]
+```
+
+1.2 get the information of the number of patients
+```{r}
+# add a column of diagnosis with the same information in the diagnosis_result column
+pscData$diagnosis <- factor(pscData$diagnosis_result, 
+                            levels = c("B", "M"), 
+                            labels = c("Benign", "Malignant"))
+
+# get the number of patients
+table(pscData$diagnosis_result)
+# round the result in percentage form to 1 decimal place
+round(prop.table(table(pscData$diagnosis)) * 100, 
+      digits = 1)
+```
+
+1.3 normalize the dataset
+```{r}
+# function for normalization
+normalize <- function(x){
+  return((x - min(x)) / (max(x) - min(x)))
+}
+
+# normalize the dataset expect the diagnosis
+pscData_n <- as.data.frame(lapply(pscData[,2:9], normalize))
+summary(pscData_n)
+```
+
+2. split the data
+```{r}
+pscData_train <- pscData_n[1:65,]
+pscData_test <- pscData_n[66:100,]
+
+pscData_trail_labels <- pscData[1:65, 1]
+pscData_test_label <- pscData[66:100, 1]
+```
+
+3. train a model on data
+```{r}
+set.seed(123)
+pscData_test_pred <- knn(train = pscData_train, 
+                         test = pscData_test, 
+                         cl = pscData_trail_labels, 
+                         k = 10)
+```
+
+4. Evaluate the model's performance
+```{r}
+CrossTable(x = pscData_test_label, 
+           y = pscData_test_pred, 
+           prop.chisq = FALSE)
+```
+The test data consisted of 35 observations. 7 predictions are true negatives 15 are true positive. 1 of them was false negatives meaning it was actually malignant in nature but got predicted as benign. 13 were false positive meaning they were benign in nature but got predicted as malignant.
+
+The overall accuracy of the model is 62.85% (7 + 15) / 35.
+
+5. try different k values see if there is any better resultss
+```{r}
+set.seed(123)
+pscData_test_pred_2 <- knn(train = pscData_train, 
+                           test = pscData_test, 
+                           cl = pscData_trail_labels, 
+                           k = 9)
+CrossTable(x = pscData_test_label, 
+           y = pscData_test_pred_2, 
+           prop.chisq = FALSE)
+```
+I tried few different k value around 10 (8, 9, 11, and 12) and found k = 9 can improve the accuracy slightly (8 + 16) / 35 = 68.6%
+
+6. using creat package to do a knn training
+6.1 prepare the dataset
+```{r}
+# extract all diagnose information
+labels <- pscData[1:100, 1]
+# combine it with the normalized data created before
+pscDataNorm <- cbind(pscData_n, labels)
+```
+
+6.2 split the dataset
+```{r}
+set.seed(123)
+inTraining <- createDataPartition(pscDataNorm$labels, 
+                                  p = 0.65, 
+                                  list = FALSE)
+
+pscDataTraining <- pscDataNorm[inTraining, ]
+pscDataTesting <- pscDataNorm[-inTraining, ]
+
+# check distribution in original data, training data, and testing data
+prop.table(table(pscDataTraining$labels)) * 100
+prop.table(table(pscDataTesting$labels)) * 100
+prop.table(table(pscDataNorm$labels)) * 100
+```
+
+6.3 split training data to training data and training control data
+```{r}
+set.seed(123)
+
+# specify that it is a 3-fold cross-validation and there will be 20 possible k values to evaluate
+pscDataCtrl_1 <- trainControl(method = "repeatedcv", 
+                              repeats = 3)
+knnFit_1 <- train(labels ~ ., 
+                  data = pscDataTraining, 
+                  method = "knn", 
+                  trControl = pscDataCtrl_1, 
+                  tuneLength = 10)
+knnFit_1
+knnFit_1$bestTune
+
+# plotting yields Number of Neighbor vs Accuracy based on repeated cross validation
+plot(knnFit_1)
+```
+As the result, the best tuning parameter k that maximizes model accuracy is 5
+
+6.4 Make prediction on the test data
+```{r}
+knnPredict_1 <- predict(knnFit_1, 
+                        newdata = pscDataTesting)
+head(knnPredict_1)
+
+# compute the accuracy rate
+mean(knnPredict_1 == pscDataTesting$labels)
+```
+The overall prediction accuracy of our model is 85.3%.
+
+6.5 Get the confusion matrix to see accuracy value and other parameter values
+```{r}
+# confusion matrix for caret package result
+confusionMatrix(table(knnPredict_1, 
+                      pscDataTesting$labels))
+
+# also plotting confusion matrix for class package
+confusionMatrix(table(pscData_test_pred,
+                      pscData_test_label))
+```
+The test data consisted of 34 observations. 20 predictions are true negatives 9 are true positive. 1 of them was false negatives meaning it was actually malignant in nature but got predicted as benign. 4 were false positive meaning they were benign in nature but got predicted as malignant. The overall accuracy is 85.3%, it is better than class package 62.86%.
+
+6.6 Applying random forest to see if the performance improves
+```{r}
+set.seed(123)
+pscDataCtrl_2 <- trainControl(method = "repeatedcv", 
+                              repeats = 3)
+
+# random forest
+pscDataRfFit <- train(labels ~ ., data = pscDataTraining, 
+                      method = "rf", 
+                      trControl = pscDataCtrl_2, 
+                      tuneLength = 10)
+pscDataRfFit 
+pscDataRfFit$bestTune
+
+plot(pscDataRfFit)
+```
+6.7 Make prediction on the test data
+```{r}
+pscDataRfPredict <- predict(pscDataRfFit, 
+                            newdata = pscDataTesting)
+```
+
+6.8 evaluate the model performance
+```{r}
+mean(pscDataRfPredict == pscDataTesting$labels)
+confusionMatrix(table(pscDataRfPredict, 
+                      pscDataTesting$labels))
+```
+As the result, the accuracy slightly improved to 88.24%.
+

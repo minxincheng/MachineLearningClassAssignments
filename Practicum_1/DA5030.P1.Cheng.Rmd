@@ -1,0 +1,442 @@
+---
+title: "Practicum_1"
+author: "Minxin Cheng"
+output: pdf_document
+---
+0. Load packages
+```{r, message = FALSE}
+#install.packages("DMwR")
+
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(reshape2)
+require(zoo)
+library(class)
+library(gmodels)
+library(DMwR)
+```
+
+# Problem 1
+
+## Question 1
+Download the data set (glass data) along with its explanation. Note that the data file doew not contain header names, you may wish to add those. The description of each column can be found in the data set explanation.
+```{r}
+# read csv
+glassData <- read.csv("glass.data", 
+                      header = FALSE)
+# assign column names
+colnames(glassData) <- c("id", "refIdx", "Na", "Mg", 
+                         "Al", "Si", "K", "Ca", "Ba", 
+                         "Fe", "type")
+```
+
+## Question 2
+Explore the data set to get a sense of the data and to get comfortable with it.
+```{r, fig.height = 8, fig.width = 8}
+# check if there is any missing values
+any(is.na(glassData))
+# check if the data is structured
+str(glassData)
+# check each column's type see if anyone needs to be changed
+sapply(glassData, class)
+# get an overall information of the data set
+summary(glassData)
+# box plots to get an overall sense by glass type
+## extract all glass type information
+glassType <- glassData %>% 
+  select(id, type)
+## reshape the data
+glassOverview <- melt(glassData[, 1:10], 
+                      id.vars = "id", 
+                      variable.name = "attribute")
+## add type information to the reshaped data
+glassOverview <- glassOverview %>% 
+  left_join(glassType, by = "id")
+## box plot
+ggplot(glassOverview, aes(x = attribute, y = value)) + 
+  geom_boxplot() + 
+  facet_wrap(~type) + 
+  labs(x = "Attribute", y = "Value") + 
+  theme_light()
+```
+
+## Question 3
+Create a histogram of column 2 (refractive index) and overlay a normal curve.
+```{r}
+ggplot(glassData, aes(x = refIdx)) + 
+  geom_histogram(breaks = seq(1.510, 1.540, by = 0.001), 
+                 colour = "black", 
+                 fill = "grey") + 
+  stat_function(fun = dnorm, 
+                args = list(mean = mean(glassData$refIdx), 
+                            sd = sd(glassData$refIdx))) + 
+  theme_light()
+```
+## Question 4
+Test normality of column 2 by performing either a Shapiro-Wilk or Kolmogorov-Smirnof test. Describe what you found.
+```{r}
+# run shapiro test
+shapiro.test(glassData$refIdx)
+# do a qq plot to visualize
+ggqqplot(glassData$refIdx)
+```
+As the Shapiro test result, p < 0.05, therefore column 2 is not normally distributed. Q-Q plot also supported it.
+
+## Question 5
+Identify any outliers for the columns using a z-score deviation approach. i.e., consider any values that are more than 2 standard deviations from the mean as outliers. Which are your outliers for each column? What would you do? Summarize potential strategies in your notebook.
+```{r}
+# normalize all columns of the dataset except id and type columns
+glassDataNorm <- as.data.frame(scale(glassData[, 2:10]))
+# summary the normalized dataset to get an overview
+summary(glassDataNorm)
+sapply(glassDataNorm, class)
+# find out outliers as long as there is one or more columns value is more than
+# 2 standard deviations from the mean
+outlier <- glassDataNorm %>% 
+  filter_all(any_vars(abs(.) > 2))
+```
+Based on the criteria above, as long as tany of the attribute has a value that is 2 standard deviations from the mean, this id is defined as an outlier. The result returned 53 cases that include outliers, it is about 1/4 of the data, we shouldn't just removed them all.
+
+Below I used some basic visualization (scatter plot, box plot) to see if they are helpful to visually define the outlier, then I used local outlier factor to find out outliers based on density following the instruction provided in Module 3's class material. 
+```{r, fig.height = 8, fig.width = 8}
+# box plot to see if we can remove the outliers from there
+## reshape the dataset
+glassDataCheck <- cbind(glassDataNorm, 
+                        id = glassData$id)
+glassDataCheck <- melt(glassDataCheck, 
+                       id.vars = "id", 
+                       variable.name = "attribute")
+## box plot
+ggplot(glassDataCheck, aes(x = attribute, y = value)) + 
+  geom_boxplot() + 
+  theme_light()
+# scatter plot to see if we can remove the outliers from there
+ggplot(glassDataCheck, aes(x = id, y = value)) + 
+  geom_point() + 
+  facet_wrap(~attribute) +
+  theme_light()
+```
+
+From the box plot, there is still a lot of outliers in each attribute, if we remove them all, it will still be a big portion of the data. The scatter plot doesn't provide a lot of information. I don't think it will be good to remove ids just based on one attribute.
+
+Here I find the outliers using local outlier factor as it detects if a data point has a substantial lower density than their neighbors.
+```{r, fig.height = 8, fig.width = 8}
+# calculate the local outlier factor of the matrix 
+outlier.scores <- lofactor(glassDataNorm, 
+                           k = 4)
+# find out the top 10 outlier.scores and define them as outliers in the data set
+outliersLOF <- order(outlier.scores, 
+                     decreasing = TRUE)[1:10]
+# plot the outliers with a pairs plot
+n <- nrow(glassDataNorm)
+labels <- 1:n
+labels[-outliersLOF] <- "."
+pch <- rep(".", n)       
+pch[outliersLOF] <- "+"
+col <- rep("black", n)
+col[outliersLOF] <- "red"
+pairs(glassDataNorm, 
+      pch = pch, 
+      col = col)
+```
+
+## Question 6
+After removing the ID column (column 1), standardize the scales of the numeric columns, except the last one (the glass type), using z-score.
+```{r}
+# the dataset has already been standardized above (in question 5), 
+# add type column back and make sure it's normalized
+glassDataNorm$type <- glassData$type
+glassDataNorm$type <- as.factor(glassDataNorm$type)
+summary(glassDataNorm)
+```
+
+## Question 7
+The data set is sorted, so creating a validation data set requires random selection of elements. Create a stratified sample where you randomly select 15% of each of the cases for each glass type to be part of the validation data set. The remaining cases will form the training data set.
+```{r}
+# randomly select 15% from each type
+glassDataValid <- glassDataNorm %>% 
+  group_by(type) %>% 
+  sample_frac(., 0.15)
+# get the remain data as training data
+glassDataTraining <- glassDataNorm %>% 
+  anti_join(glassDataValid)
+```
+
+## Question 8
+Implement the k-NN algorithm in R (do not use an implementation of k-NN from a package) and use your algorithm with a k = 4 to predict the glass type for the following two cases:
+```{r}
+# create a data frame for the cases need to be predicted
+glassDataTest_1 <- data.frame("id" = c(215, 216), 
+                              "refIdx" = c(1.51621, 1.57930), 
+                              "Na" = c(12.52, 12.69), 
+                              "Mg" = c(3.48, 1.86), 
+                              "Al" = c(1.39, 1.82), 
+                              "Si" = c(73.39, 72.62), 
+                              "K" = c(0.60, 0.52), 
+                              "Ca" = c(8.55, 10.52), 
+                              "Ba" = c(0.00, 0.00), 
+                              "Fe" = c(0.07, 0.05), 
+                              "type" = c(0, 0))
+# normalize the dataset
+glassDataTest_1 <- rbind(glassData, 
+                         glassDataTest_1)
+glassDataTest_1[, 2:10] <- as.data.frame(scale(glassDataTest_1[,2:10]))
+glassDataTest_1 <- glassDataTest_1 %>% 
+  filter(id == 215 | id == 216) %>% 
+  select(-id)
+# duplicate one for comparing with the class package
+glassDataTest_2 <- glassDataTest_1
+glassDataTest_2
+```
+Create a knn function named "knn_1" to predict these two cases glass type.
+```{r}
+knn_1 <- function(trainData, testData, k){
+  
+  for(i in 1:nrow(testData)){
+    for(j in 1:(ncol(trainData)-1)){
+      # calculate distance between each value in test data and each value in train data
+      d <- (trainData[, j] - testData[i, j]) ^ 2
+      # get the index of top k nearest neighbors 
+      knnIdx <- head(sort(d, index.return = TRUE)$ix, k)
+      # get the type of glass of these k nearest neighbors
+      nn <- sort(table(trainData[knnIdx, 10]), TRUE)
+      # add the predicted type to test data's type column
+      testData[i, 10] <- as.numeric(names(nn)[1])
+    }
+  }
+  testData
+}
+# use this function to predict these two cases type of glass
+glassDataPred_1 <- knn_1(glassDataTraining, 
+                         glassDataTest_1, 
+                         4)
+glassDataPred_1
+```
+
+## Question 9
+Apply the knn function from the class package with k = 4 and redo the cases from Question(8). Compare your answers.
+```{r}
+set.seed(123)
+# run knn function from class package
+glassDataPred_2 <- knn(train = glassDataTraining, 
+                       test = glassDataTest_2, 
+                       cl = glassDataTraining$type, 
+                       k = 4)
+glassDataPred_2
+# add the predicted results to the data frame
+glassDataTest_2$type <- glassDataPred_2
+glassDataTest_2
+```
+My function predicted both of the cases are glass type 1, the knn function from class package predicted them as 1 and 2.
+
+## Question 10
+Using k-NN from the class package, create a plot of k (x-axis) from 2 to 8 versus accuracy (percentage of correct classifications) using ggplot.
+```{r}
+# create a data frame called accurach with one column for all k values, 
+# and one column for each k's accuracy
+accuracy <- data.frame("k" = c(2, 3, 4, 5, 6, 7, 8), 
+                       "accuracy" = c(0, 0, 0, 0, 0, 0, 0))
+# create a loop to calculate accuracy for each k
+for (k in 2:8){
+  
+  set.seed(123)
+  # get the predict type
+  glassDataPred_3 <- knn(train = glassDataTraining, 
+                         test = glassDataValid, 
+                         cl = glassDataTraining$type, 
+                         k)
+  # create a matrix with type in validation data and type predicted by knn
+  mtrix <- as.matrix(table(glassDataValid$type, 
+                           glassDataPred_3))
+  # calculate accuracy and add it to the accuracy data frame
+  accuracy[which(k == accuracy$k), 2] <- sum(diag(mtrix)) / nrow(glassDataValid)
+  
+}
+# plot the k-accuracy table
+ggplot(accuracy, aes(x = k, y = accuracy)) + 
+  geom_point() + 
+  geom_line()+ 
+  scale_x_continuous(breaks = seq(2, 8, by = 1)) + 
+  labs(x = "k", y = "Accuracy") + 
+  theme_light()
+```
+
+## Question 11
+Download this (modified) version of the glass dataset containing missing values in column 4. Identify the missing values. Impute the missing values of this continuous numeric column using your regression version of kNN from Problem 2 below using the other columns are predictor features.
+```{r}
+# read in the data file
+glassDataModified <- read.csv("da5030.glass.data_with_missing_values.csv", 
+                              header = FALSE)
+# give columns names
+colnames(glassDataModified) <- c("id", "refIdx", "Na", "Mg", "Al", 
+                                 "Si", "K", "Ca", "Ba", "Fe", "type")
+# normalize the dataset
+glassDataModifiedNorm <- as.data.frame(scale(glassDataModified[,2:11]))
+```
+
+```{r}
+# filter out cases that contain missing Mg values
+glassDataModifiedImpute <- glassDataModifiedNorm %>% 
+  filter(is.na(Mg)) %>% 
+  select(-Mg)
+# identify the target data
+glassDataModifiedTarget <- glassDataModifiedNorm %>% 
+  filter(!is.na(Mg)) %>% 
+  select(Mg)
+# identify the training data
+glassDataModifiedTrain <- glassDataModifiedNorm %>% 
+  filter(!is.na(Mg)) %>% 
+  select(-Mg)
+```
+
+```{r}
+# copy the knn.reg function from below
+knn.reg <- function(new_data, target_data, train_data, k){
+  # create a predict table for results 
+  pred <- as.data.frame(rep(0, nrow(new_data)))
+  colnames(pred) <- "pred"
+  
+  for(i in 1:nrow(new_data)){
+    for(j in 1:ncol(new_data)){
+      # calculate distance between each value in test data and each value in train data
+      d <- (train_data[, j] - as.numeric(new_data[i, j])) ^ 2
+      # get the index of top k nearest neighbors
+      knnIdx <- head(sort(d, index.return = TRUE)$ix, k)
+      # get the type of glass of these k nearest neighbors
+      nn <- sort(table(target_data[knnIdx, 1]), TRUE)
+      # calculate the weighted products
+      weighted <- 4 * as.numeric(names(nn)[1]) + 
+        2 * as.numeric(names(nn)[2]) + 
+        sum(as.numeric(names(nn)[3:k]))
+      # calculate the weighted average
+      weightedAve <- weighted / (4 + 2 + (k - 2))
+      # assign the weighted average to predict table
+      pred[i, 1] <- weightedAve
+    }
+  }
+  pred
+}
+
+# run the knn.reg function
+set.seed(123)
+knn.reg(glassDataModifiedImpute, 
+        glassDataModifiedTarget, 
+        glassDataModifiedTrain, 
+        k = 4)
+```
+Above is the predicted Mg values for the missing data.
+
+# Problem 2
+
+## Question 1
+Investigate this data set of home prices in King County (USA)
+```{r}
+houseData <- read.csv("kc_house_data.csv")
+# check missing values
+any(is.na(houseData))
+# check structure
+str(houseData)
+```
+
+## Question 2
+Save the price column in a separate vactor/dataframe called target_data. Move all of the columns except the ID, data, price, yr_renovated, zipcode, lat, long, sqft_living12, and sqft_lot 15 columns into a new data frame called train_data.
+```{r}
+# save the price column to target_data
+target_data <- houseData %>% select(price)
+# move required columns to train_data
+train_data <- houseData %>% select(-c(id, date, price, yr_renovated, 
+                                      zipcode, lat, long, sqft_living15, 
+                                      sqft_lot15))
+# check column info of train_data
+sapply(train_data, class)
+```
+
+## Question 3
+Normalize all of the columns (except the boolean columns waterfront and view) using min-max normalization
+```{r}
+# create the min-max function
+minMax <- function(x){
+  return((x - min(x)) / (max(x) - min(x)))
+}
+# move waterfront and view column to the end of the data set
+train_data_norm <- train_data %>% 
+  relocate(c(waterfront, view), 
+           .after = last_col())
+# normalize the data set using min-max function
+train_data_norm[, 1:10] <- as.data.frame(lapply(train_data_norm[, 1:10], 
+                                                minMax))
+```
+
+## Question 4
+Build a function called knn.reg that implements a regression version of k-NN that averages the prices of the k nearest neighbors using a weighted average where the weight is 4 for the closest neightbor, 2 for the second closest and 1 for the remaining neighbors (recall that a weighted average requires that you divide the sum product of the weight and values by the sum of the weights).
+```{r}
+# create the knn.reg function
+knn.reg <- function(new_data, target_data, train_data, k){
+  # create a predict table for results 
+  pred <- as.data.frame(rep(0, nrow(new_data)))
+  colnames(pred) <- "pred"
+  
+  for(i in 1:nrow(new_data)){
+    for(j in 1:ncol(new_data)){
+      # calculate distance between each value in test data and each value in train data
+      d <- (train_data[, j] - as.numeric(new_data[i, j])) ^ 2
+      # get the index of top k nearest neighbors
+      knnIdx <- head(sort(d, index.return = TRUE)$ix, k)
+      # get the type of glass of these k nearest neighbors
+      nn <- sort(table(target_data[knnIdx, 1]), TRUE)
+      # calculate the weighted products
+      weighted <- 4 * as.numeric(names(nn)[1]) + 
+        2 * as.numeric(names(nn)[2]) + 
+        sum(as.numeric(names(nn)[3:k]))
+      # calculate the weighted average
+      weightedAve <- weighted / (4 + 2 + (k - 2))
+      # assign the weighted average to predict table
+      pred[i, 1] <- weightedAve
+    }
+  }
+  pred
+}
+```
+
+## Question 5
+Forecast the price of this new home using your regression k-NN using k = 4.
+```{r}
+# type in the data
+new_data <- data_frame("bedrooms" = 4, 
+                       "bathrooms" = 3, 
+                       "sqft_living" = 4852, 
+                       "sqft_lot" = 11245, 
+                       "floors" = 3, 
+                       "condition" = 3, 
+                       "grade" = 11, 
+                       "sqft_above" = 2270, 
+                       "sqft_basement" = 820, 
+                       "yr_built" = 1986, 
+                       "waterfront" = 1, 
+                       "view" = 1)
+# normalize the new data
+new_data <- rbind(train_data, new_data)
+new_data <- new_data %>% 
+  relocate(c(waterfront, view), 
+           .after = last_col())
+new_data[, 1:10] <- as.data.frame(lapply(new_data[, 1:10], 
+                                         minMax))
+new_data <- new_data %>% slice(n())
+# run the knn.reg function
+set.seed(123)
+knn.reg(new_data, 
+        target_data, 
+        train_data, 
+        4)
+```
+As the result from knn.reg, the predicted price of this new home is 584437.5
+
+
+
+
+
+
+
+
+

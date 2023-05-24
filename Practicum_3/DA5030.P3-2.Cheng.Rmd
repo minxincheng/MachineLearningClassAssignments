@@ -1,0 +1,95 @@
+---
+title: "DA5030.P3-2"
+author: "Minxin Cheng"
+output:
+  pdf_document: default
+  html_document: default
+---
+# Problem 2
+
+### Step 1. Read in Data file
+```{r}
+data <-read.csv("Wholesale customers data.csv",header = T)
+```
+
+### Step 2. Get an overview of the dataset
+```{r}
+summary(data)
+```
+There is a big difference for the top customers in each category (e.g. Fresh goes from a min of 3 to a max of 112,151). Normalizing/scaling the data won’t necessarily remove those outliers. Doing a log transformation might help. We could also remove those customers completely. From a business perspective, you don’t really need a clustering algorithm to identify what your top customers are buying. You usually need clustering and segmentation for your middle 50%.
+
+Therefore, we will try to remove the top 5 customers from each category. We’ll use a custom function and create a new data set called data.rm.top
+```{r}
+# create a function to remove the top 5 customers
+top.n.custs <- function(data, cols, n = 5){
+  # initialize a vector to hold customers being removed
+  idx.to.remove <- integer(0)
+  for(c in cols){
+    # sort column in descending order, which returns the sorted index 
+    # instead the actual values sorted
+    col.order <- order(data[ , c], decreasing = TRUE)
+    # take the first n of the sorted column
+    idx <- head(col.order, n)
+    # combine and remove the row ids that need to be removed
+    idx.to.remove <- union(idx.to.remove, idx)
+  }
+  return(idx.to.remove)
+}
+# perform the function
+top.custs <- top.n.custs(data, cols = 3:8, n = 5)
+# return the number of customers that were removed
+length(top.custs)
+# check the removed customers
+data[top.custs, ]
+# remove them from dataset
+data.rm.top <- data[-c(top.custs), ]
+```
+Now, using data.rm.top, we can perform the cluster analysis. We’ll still need to drop the Channel and Region variables. These are two ID fields and are not useful in clustering.
+```{r}
+set.seed(76964057)
+# remove first two columns and create 5 clusters
+k <- kmeans(data.rm.top[ , -c(1, 2)], center = 5)
+# check cluster centers
+k$centers
+# count the number of data points in each cluster
+table(k$cluster)
+```
+Now we can start interpreting the cluster results:
+
+* Cluster 1 looks to be a heavy Grocery and above average Detergents_Paper but low Fresh foods.
+* Cluster 3 is dominant in the Fresh category.
+* Cluster 5 might be either the “junk drawer” catch-all cluster or it might represent the small customers. A measurement that is more relative would be the withinss and betweenss.
+
+k$withinss would tell you the sum of the square of the distance from each data point to the cluster center. Lower is better. Seeing a high withinss would indicate either outliers are in your data or you need to create more clusters.
+k$betweenss tells you the sum of the squared distance between cluster centers. Ideally you want cluster centers far apart from each other.
+It’s important to try other values for K. You can then compare withinss and betweenss. This will help you select the best K. For example, with this data set, what if you ran K from 2 through 20 and plotted the total within sum of squares? You should find an “elbow” point. Wherever the graph bends and stops making gains in withinss you call that your K.
+```{r}
+# try k from 2 to 20
+rng <- 2:20
+# run the kmeans algorithm 100 times
+tries <- 100
+# set up an empty vector to hold all of points
+avg.totw.ss <- integer(length(rng))
+for(v in rng){
+  # set up an empty vector to hold the 100 tries
+  v.totw.ss <- integer(tries)
+  for(i in 1: tries){
+    # run kmeans
+    k.temp <- kmeans(data.rm.top, centers = v)
+    # store the total withinss
+    v.totw.ss[i] <- k.temp$tot.withinss
+  }
+  # average the 100 total withinss
+  avg.totw.ss[v - 1] <- mean(v.totw.ss)
+}
+# plot the figure to see the ideal number of clusters
+plot(rng, avg.totw.ss, type = "b", 
+     main = "Total Within SS by Various K", 
+     ylab = "Average Total Within Sum of Squares", 
+     xlab = "Value of K")
+```
+This plot doesn’t show a very strong elbow. Somewhere around K = 5 we start losing dramatic gains.
+
+
+
+

@@ -1,0 +1,245 @@
+---
+title: "PeerReview_7"
+author: Minxin Cheng
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r, message = FALSE}
+#install.packages("kernlab")
+#install.packages("neuralnet")
+#install.packages("arules")
+library(readxl)
+library(kernlab)
+library(neuralnet)
+library(arules)
+```
+
+# Problem 1
+
+### 1. Read data file
+```{r}
+concrete <- read_excel("Concrete_Data.xls")
+```
+
+### 2. Change column names
+```{r}
+# change column names
+colnames(concrete) <- c("cement", "slag", "ash", "water", "superplastic", 
+                        "coarseagg", "fineagg", "age", "strength")
+# check data structure
+str(concrete)
+```
+
+### 3. Normalize the data
+```{r}
+# create a normalization function
+normalize <- function(x){
+  return((x - min(x)) / (max(x) - min(x)))
+}
+# normalize data
+concrete_norm <- as.data.frame(lapply(concrete, normalize))
+# summary the nurmalized data
+summary(concrete_norm$strength)
+# compare with the original data to make sure the data was normalized
+summary(concrete$strength)
+```
+
+### 4. Split the data set
+Since the data has already been randomized, we directly split it by row numbers
+```{r}
+concrete_train <- concrete_norm[1:773, ]
+concrete_test <- concrete_norm[774:1030, ]
+```
+
+### 5. Train a model
+```{r, echo = TRUE}
+# train a model using training data
+set.seed(123)
+concrete_model <- neuralnet(strength ~ cement + slag + ash + water + 
+                              superplastic + coarseagg + fineagg + age, 
+                            data = concrete_train)
+# visualize the model
+plot(concrete_model, rep = "best")
+```
+
+This plot illustrated the eight features as the input and the weights of each connections. The blue line indicated the bias terms, which are numeric constants that allow the value at the indicated nodes to be shifted upward or downward. There is also a Sum of Squared Errors (SSE) at the bottom gives a general idea of the performance of the data. 
+
+### 6. Make prediction
+The compute() function is slightly different from predict() function in the way that it returns a list with two components: 1)neurons, which stores the neurons for each layer in the network, and 2)net.result, which stores the predicted values
+```{r}
+model_results <- neuralnet::compute(concrete_model, concrete_test[1:8])
+predicted_strength <- model_results$net.result
+head(predicted_strength)
+```
+
+### 7. Evaluate the model performance
+Given this is a numeric prediction problem rather than a classification, we can't use confusion matrix to examine model accuracy, will use the cor() function to get a correlation between variables
+```{r}
+cor(predicted_strength, concrete_test$strength)
+```
+The correlation is 0.72, which is a fairly strong linear relationship. Next we can try to improve the performance by using more hidden nodes.
+
+### 8. Improve model performance
+```{r}
+# train another model using more hidden nodes
+set.seed(123)
+concrete_model2 <- neuralnet(strength ~ cement + slag + ash + water + 
+                               superplastic + coarseagg + fineagg +age, 
+                             data = concrete_train, hidden = 5)
+# plot the model
+plot(concrete_model2, rep = "best")
+```
+
+From the figure above, the SSE has been reduced from 5.67 to 1.77 and the number of training steps increased from 2559 to 5410. A more complex networks will take more iterations to find the optimal weights.
+
+### 9. Make prediction using the improved model
+```{r}
+model_results2 <- neuralnet::compute(concrete_model2, concrete_test[1:8])
+predicted_strength2 <- model_results2$net.result
+```
+
+### 10. Evaluate the improved model
+```{r}
+cor(predicted_strength2, concrete_test$strength)
+```
+The correlation has been improved from 0.72 to 0.80.
+
+# Problem 2
+
+### 1. Read in data file
+```{r}
+letters <- read.csv("letter-recognition.data")
+```
+
+### 2. Change column names and check the data set
+```{r}
+# change column names
+colnames(letters) <- c("letter", "xbox", "ybox", "width", "height", "onpix", 
+                       "xbar", "ybar", "x2bar", "y2bar", "xybar", "x2ybar", 
+                       "xy2bar", "xedge", "xedgey", "yedge", "yedgex")
+# check data structure
+str(letters)
+# check column types
+sapply(letters, class)
+# change the letter column from chacater to factor
+letters$letter <- as.factor(letters$letter)
+```
+
+### 3. Split the data set to training and testing
+data has already been randomized and the r package will recale the data automatically
+```{r}
+letters_train <- letters[1:16000, ]
+letters_test <- letters[16001:19999, ]
+```
+
+### 4. Train a model
+```{r}
+set.seed(123)
+letter_classifier <- ksvm(letter ~ ., 
+                          data = letters_train, kernel = "vanilladot")
+letter_classifier
+```
+
+### 5. Make predictions
+```{r}
+# make predictions
+letter_predictions <- predict(letter_classifier, letters_test)
+# check the first few predicted letters
+head(letter_predictions)
+# use table() function to compare the predicted letter with 
+# the true letter in the testing dataset
+table(letter_predictions, letters_test$letter)
+```
+From the table above, most of the predictions are correct. We can also see that the most common uncorrect prediction is H-O, Z-S, F-P, R-K, which make sense. Next we will summarize the predictions.
+
+### 6. Evaluate model performance
+```{r}
+agreement <- letter_predictions == letters_test$letter
+table(agreement)
+prop.table(table(agreement))
+```
+From the counting above, the overall accuracy is 0.84.
+
+### 7. Improve model performance
+Improve the model by using a more complex kernel function to map the data into a higher dimensional space.
+```{r}
+letter_classifier_rbf <- ksvm(letter ~ ., 
+                              data = letters_train, 
+                              kernel = "rbfdot")
+letter_predictions_rbf <- predict(letter_classifier_rbf, letters_test)
+```
+
+### 8. Evaluate the improved model
+```{r}
+agreement_rbf <- letter_predictions_rbf == letters_test$letter
+table(agreement_rbf)
+prop.table(table(agreement_rbf))
+```
+The overall accuracy improved from 0.84 to 0.93, which is pretty good.
+
+# Problem 3
+
+### 1. Read in data file
+```{r}
+groceries <- read.transactions("Groceries.csv", header = FALSE, sep = ",")
+```
+
+### 2. Summary the data set
+```{r}
+summary(groceries)
+```
+From the table, there are 9837 transactions and 233 different items. Each cell in the matrix is 1 if the item was purchased for the corresponding transaction, or else is 0. Density indicates the proportion of nonzero matrix cells is 0.023. There are 9838 x 233 = 2193874 positions in the matrix, therefore, there are 2193874 x 0.0232271 = 50957 items were purchased. On average, each transaction contains 50957 / 9838 = 5.18 items. The most frequent items was whole milk, vegetables, rolls/buns, and soda. 
+
+### 3. Visualize the data set
+```{r}
+# plot the items that with at least 10% support
+itemFrequencyPlot(groceries, support = 0.1)
+# plot the top 20 items
+itemFrequencyPlot(groceries, topN = 20)
+```
+### 4. Train a model
+
+First set the confidence threshold of 0.25, meaning that in order to be included in the results, the rule has to be correct at least 25 percent of the time. This will eliminate the most unreliable rules. The minlen is set as 2 to eliminate rules that contain fewer than two items. 
+```{r}
+set.seed(123)
+groceryrules <- apriori(groceries, 
+                        parameter = list(support = 0.006, 
+                                         confidence = 0.25, 
+                                         minlen = 2))
+groceryrules
+```
+The groceryrules contains a set of 463 association rules. 
+
+### 5. Evaluate model performance
+```{r}
+summary(groceryrules)
+```
+Lift of a rule measures how much more likely one item or itemset is purchased relative to its typical rate of purchase. A large lift value is a stronger indicator that a rule is important, and reflects a true connection between the items. We can then look at specific rules. The first three rules in the groceryrules are:
+
+```{r}
+inspect(groceryrules[1:3])
+```
+Take the first row as an example, if a customer buys a potted plants, they will also likely to buy whole milk. The support and confidence for this rule is 0.007 and 0.4. This rule covers 0.017 percent of the transactions.
+
+### 6. Improve model performance
+```{r}
+# reorder the groceryrules by lift
+inspect(sort(groceryrules, by = "lift")[1:5])
+```
+
+Use berry as an example, if we want to know all the associations about berry
+```{r}
+# find any rules with berries appearing in the rule
+berryrules <- subset(groceryrules, items %in% "berries")
+inspect(berryrules)
+```
+
+### 7. Save association rules to a data frame
+```{r}
+groceryrules_df <- as(groceryrules, "data.frame")
+str(groceryrules_df)
+```
+
+![ROC diagram](ROC.png)
+

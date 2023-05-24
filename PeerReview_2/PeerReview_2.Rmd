@@ -1,0 +1,234 @@
+---
+title: "PeerReview_2_MinxinCheng"
+output:
+  pdf_document: default
+  html_document: default
+---
+00. load packages
+```{r}
+library(dplyr)
+library(tidyverse)
+library(ggpubr)
+library(gsheet)
+library(forecast)
+```
+
+0. Read in data sets
+```{r}
+data(USArrests)
+head(USArrests)
+
+USArrests <- USArrests %>% 
+  rownames_to_column("State")
+```
+
+1. Determine which states are outliers in terms of murders. Outliers, for the sake of this question, are defined as values that are more than 1.5 standard deviations from the mean
+```{r}
+# check if there is any missing data
+any(is.na(USArrests))
+
+# check and print out outliers
+outlier <- USArrests %>% 
+  select(State, Murder) %>% 
+  mutate(meanMurder = mean(Murder), 
+         sdMurder = sd(Murder), 
+         checkOutlier = (abs(Murder - meanMurder) / sdMurder)) %>% 
+  filter(checkOutlier > 1.5)
+outlier
+```
+As the table, six states' murder data can be defined as outliers, they are: Florida, Georgia, Louisiana, Mississippi, North Dakota, and South Carolina.
+
+2. For the same dataset, is there a correlation between urban population and murder, i.e., as one goes up, does the other statistical as well? Comment on the strength of the correlation. Calculate the Pearson coefficient of correlation in R
+```{r}
+# visualize in order to check the relationship between these variables
+ggscatter(USArrests, 
+          x = "UrbanPop", 
+          y = "Murder", 
+          add = "reg.line", 
+          conf.int = TRUE, 
+          cor.coef = TRUE, 
+          cor.method = "pearson")
+```
+From the visualization above, the relationship between urban population and murder is linear. Then test the normality.
+
+```{r}
+# run shapiro test to check the normality
+shapiro.test(USArrests$UrbanPop)
+shapiro.test(USArrests$Murder)
+
+# q-q plot to visualize
+ggqqplot(USArrests$UrbanPop, 
+         ylab = "Urban Population")
+ggqqplot(USArrests$Murder, 
+         ylab = "Murder")
+```
+Results from Shapiro test (p = 0.4385 for urban population and p = 0.06674 for murder) indicated there is no strong reason to reject the null hypothesis, therefore, these two variables are normally distributed. Q-Q plots also supported the result.
+
+```{r}
+# run Pearson test
+cor.test(USArrests$UrbanPop, 
+         USArrests$Murder, 
+         method = "pearson")
+```
+From Pearson test's result, p value is 0.6312, indicates these two variables are not strongly correlated. There is almost no association between urban population and murder (estimated correlation 0.06957262).
+
+3. Based on the data (the growth of mobile phone use in Brazil), forecast phone use for the next time period using a 2-year weighted moving average (with weights of 5 for the most recent year, and 2 for other), exponential smoothing (alpha of 0.4), and linear regression trendline.
+
+3.0. read in data set
+```{r}
+# read in data set
+url <- 'https://docs.google.com/spreadsheets/d/1tOnM9XceK4Ak8tzWQ2vDelWlJexzJiS3LbT6MN6_rW0/edit?usp=sharing'
+
+# duplicate the data set for each model
+phoneDataModel1 <- gsheet2tbl(url, sheetid = NULL)
+phoneDataModel2 <- gsheet2tbl(url, sheetid = NULL)
+phoneDataModel3 <- gsheet2tbl(url, sheetid = NULL)
+phoneDataModel1
+```
+
+3.1. 2-year weighted moving average model
+```{r}
+# get the last 2 years data and calculate the weighted value
+recentYears <- phoneDataModel1 %>% 
+  filter(Year == 10 | Year == 11) %>% 
+  mutate(weighted = case_when(Year == 10 ~ Subscribers * 2, 
+                              Year == 11 ~ Subscribers * 5))
+recentYears
+
+# calculate the estimated Subscribers for year 12
+phoneDataModel1$Subscribers[12] <- sum(recentYears$weighted) / (5 + 2)
+phoneDataModel1
+```
+Based on moving average model, the estimation of 12 years subscribers' value is 194662700.
+
+3.2. Exponential smoothing model
+```{r}
+# with package: estimate year 12 Subscriber's value
+#estModel2 <- ses(phoneDataModel2$Subscribers[1:11], 
+#                 h = 1, 
+#                 alpha = 0.4, 
+#                 initial = "simple")
+#
+#phoneDataModel2$Subscribers[12] <- estModel2$mean
+#phoneDataModel2
+
+# without package
+phoneDataModel2$Estimation <- 0
+phoneDataModel2$Error <- 0
+phoneDataModel2$Estimation[1] <- phoneDataModel2$Subscribers[1]
+
+for (n in 2:11){
+  
+  phoneDataModel2$Estimation[n] <- phoneDataModel2$Estimation[n - 1] +
+    0.4 * phoneDataModel2$Error[n - 1]
+  phoneDataModel2$Error[n] <- phoneDataModel2$Subscribers[n] - phoneDataModel2$Estimation[n]
+  
+}
+
+# eistimate subscribers value of year 12
+phoneDataModel2$Subscribers[12] <- phoneDataModel2$Estimation[11] +
+    0.4 * phoneDataModel2$Error[11]
+phoneDataModel2
+```
+Based on exponential smoothing model, the estimation of 12 years subscribers' value is 165168214.
+
+3.3 Linear regression trendline model
+```{r}
+# run linear regression
+regPhoneData <- lm(phoneDataModel3$Subscribers[1:11] ~ phoneDataModel3$Year[1:11])
+summary(regPhoneData)
+```
+
+```{r}
+# calculated the estimated value
+phoneDataModel3$Subscribers[12] <- -15710760 + 18276748 * (12)
+phoneDataModel3
+```
+Based on linear regression trendline model, the estimation of 12 years subscribers' value is 203610216.
+
+4. Calculate the squared error for each model, i.e., use the model to calculate a forecast for each given time period and then the squared error. Finally, calculate the average (mean) squared error for each model. Which model has the smallest mean squared error (MSE)?
+
+4.1. Weighted moving average model
+```{r}
+# create 3 empty columns for estimations, errors, and squared errors
+phoneDataModel1$Estimation <- 0
+phoneDataModel1$Error <- 0
+phoneDataModel1$SqError <- 0
+
+# for loop to calculate estimated values
+for (i in 3:12) {
+  
+phoneDataModel1$Estimation[i] <- sum(2 * (phoneDataModel1[(i - 2), 2]) + 
+                                       5 * (phoneDataModel1[(i - 1), 2])) / (2 + 5)
+phoneDataModel1$Error[i] <- phoneDataModel1$Subscribers[i] - phoneDataModel1$Estimation[i]
+phoneDataModel1$SqError[i] <- phoneDataModel1$Error[i] ^ 2
+
+}
+
+# print the table
+phoneDataModel1
+
+# calculate the mean squared error
+MSE1 <- mean(phoneDataModel1$SqError)
+MSE1
+```
+4.2. Exponential smoothing model
+```{r}
+phoneDataModel2$SqError <- 0
+
+# for loop to calculate estimated values
+for (j in 2:11){
+  
+  phoneDataModel2$Error[j] <- phoneDataModel2$Subscribers[j] - phoneDataModel2$Estimation[j]
+  phoneDataModel2$SqError[j] <- phoneDataModel2$Error[j] ^ 2
+  
+}
+
+phoneDataModel2
+
+MSE2 <- mean(phoneDataModel2$SqError)
+MSE2
+```
+4.3. Linear regression trendline model MSE
+```{r}
+# create 3 empty columns for estimations, errors, and squared errors
+phoneDataModel3$Estimation <- 0
+phoneDataModel3$Error <- 0
+phoneDataModel3$SqError <- 0
+
+# for loop to calculate estimated values
+for (k in 1:12){
+
+  phoneDataModel3$Estimation[k] <- -15710760 + 18276748 * phoneDataModel3$Year[k]
+  phoneDataModel3$Error[k] <- phoneDataModel3$Subscribers[k] - phoneDataModel3$Estimation[k]
+  phoneDataModel3$SqError[k] <- phoneDataModel3$Error[k] ^ 2
+  
+}
+
+phoneDataModel3
+
+MSE3 <- mean(phoneDataModel3$SqError)
+MSE3
+```
+
+4.4. Compare MSEs
+```{r}
+# find out the minimum mean squared value
+minMSE <- min(MSE1, MSE2, MSE3)
+minMSE
+```
+From calculations above, Weighted Moving Average model has mean squared error 4.987986e+14, Exponential Smoothing model's mean squared error 1.351018e+15, and Linear Regression Trendline model 1.159902e+14. Linear Regression Trendline model has the smallest mean squared error.
+
+5. Calculate a weighted average forecast by averaging out the three forecasts calculated in (3) with the following weights: 4 for trend line, 2 for exponential smoothing, 1 for weighted moving average. Remember to divide by the sum of weights in a weighted average.
+```{r}
+weightedAve <- sum(1 * phoneDataModel1[12, 2] + 
+                     2 * phoneDataModel2[12, 2] + 
+                     4 * phoneDataModel3[12, 2]) / (1 + 2 + 4)
+weightedAve
+```
+
+
+
+
+
+

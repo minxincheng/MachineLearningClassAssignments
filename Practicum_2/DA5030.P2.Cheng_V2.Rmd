@@ -1,0 +1,714 @@
+---
+title: "Practicum_2"
+author: Minxin Cheng
+output:
+  pdf_document: default
+  html_notebook: default
+---
+```{r, message = FALSE}
+#install.packages("dplyr")
+#install.packages("DMwR")
+#install.packages("psych")
+#install.packages("klaR")
+#install.packages("caret")
+#install.packages("MuMIn")
+library(dplyr)
+library(DMwR)
+library(psych)
+library(klaR)
+library(caret)
+library(MuMIn)
+```
+
+# Problem 1
+
+## Question 1
+Download the data set Census Income Data for Adults along with its explanation. There are two data sets (adult.data and adult.test). Note that the data file does not contain header names, you may wish to add those. The description of each column can be found in the data set explanation. Combine the two data sets into a single data set.
+
+### 1.1 Read in data files
+```{r}
+# read adult. data
+adult.data <- read.csv("adult.data", header = FALSE)
+# give column names to adult.data
+colnames(adult.data) <- c("age", "workclass", "fnlwgt", "edu", 
+                          "edunum", "status", "occupation", "relationship", 
+                          "race", "sex", "cgain", "closs", "hrperweek",
+                          "country", "class")
+# read adult.test
+adult.test <- read.csv("adult.test", header = FALSE)
+adult.test <- adult.test[-1, ]
+# give column names to adult. test
+colnames(adult.test) <- c("age", "workclass", "fnlwgt", "edu", "edunum", 
+                          "status", "occupation", "relationship", "race", 
+                          "sex", "cgain", "closs", "hrperweek", 
+                          "country", "class")
+```
+
+### 1.2 Combine two data sets
+```{r}
+adult.data <- rbind(adult.data, adult.test)
+```
+
+## Question 2
+Explore the combined data set as you see fit and that allows you to get a sense of the data and get comfortable with it.
+
+### 2.1 Check column types
+```{r}
+# check each column's type
+sapply(adult.data, class)
+# change age, fnlwgt, edunum, captial-gain, captial-loss, and hours-per-weed to numeric
+adult.data[ , c(1, 3, 5, 11:13)] <- lapply(adult.data[ , c(1, 3, 5, 11:13)], 
+                                           as.numeric)
+# change all the rest to factor
+adult.data[ , -c(1, 3, 5, 11:13)] <- lapply(adult.data[ , -c(1, 3, 5, 11:13)], 
+                                            as.factor)
+```
+
+### 2.2 Summarize the data set
+```{r}
+# check if there is any missing data
+any(is.na(adult.data))
+# check the structure of the data 
+str(adult.data)
+# create a summary table of the data set
+summary(adult.data)
+```
+From the summarization above, workclass, occupation, and country has a level "?" indicating missing data, and most of the strings has a white space in front of them. Next I will check the number of missing data and remove white space. If the missing data is not a big portion of the data set, it will be removed. 
+
+### 2.3 Clean the data set
+```{r}
+# remove all white space in the data set
+adult.data <- as.data.frame(apply(adult.data, 2, 
+                                  function(x) gsub('\\s+', '', x)))
+# check missing data
+missing <- adult.data %>% 
+  filter(workclass == "?" | occupation == "?" | country == "?")
+nrow(missing)
+# remove all data (7.4% of the entire data set)
+adult.data <- adult.data %>% 
+  filter(workclass != "?", occupation != "?", country != "?") %>% 
+  droplevels()
+# change class column to a binomial factor that lower than 50K as "lower", 
+# higher than 50K as "higher"
+adult.data$class <- as.factor(case_when((
+  adult.data$class == "<=50K" | adult.data$class == "<=50K.") ~ "lower", 
+  (adult.data$class == ">50K" | adult.data$class == ">50K.") ~ "higher"))
+# summary the data set again to get an overview
+adult.data[ , c(1, 3, 5, 11:13)] <- lapply(adult.data[ , c(1, 3, 5, 11:13)], 
+                                           as.numeric)
+adult.data[ , -c(1, 3, 5, 11:13)] <- lapply(adult.data[ , -c(1, 3, 5, 11:13)], 
+                                            as.factor)
+summary(adult.data)
+```
+
+## Question 3
+Split the combined data set 70%/30% so you retain 30% for validation and tuning using random sampling with replacement. Ues a fixed seed so you produce the same results each time you run the code. Going forward you will use the 70% data set for training and the 30% data set for validation and to determine accuracy. 
+
+```{r}
+# generate random numbers as the row index of training data
+set.seed(500)
+train.sample <- sample.int(nrow(adult.data), 
+                           0.7 * nrow(adult.data), replace = TRUE)
+# split the data set
+adult.data.training <- adult.data[train.sample, ]
+adult.data.testing <- adult.data[-train.sample, ]
+# check the proportion of lower and higher in both training and testing data
+prop.table(table(adult.data.training$class))
+prop.table(table(adult.data.testing$class))
+```
+As the proportion table shows, training and testing data are fairly even.
+
+## Question 4
+Using the Naive Bayes Classification algorithm from the KlaR package, build a binary classifier that predicts whether an individual earns more than or less than US$50,000. Only use the features age, education, workclass, sex, race, and naive-country. Ignore any other features in your model. You need to transform continuous variables into categorical variables by binning (use equal size bins from min to max).
+
+### 4.1 Check the distribution of age
+```{r}
+# make a copy of training data and testing data for Naive Bayes
+adult.data.training.nb <- adult.data.training
+adult.data.testing.nb <- adult.data.training
+# check the distribution of age
+summary(adult.data$age)
+hist(adult.data$age)
+```
+Therefore, all the subject will be binned to 5 groups based on their age: 17-20, 20-40, 40-60, 60-80, 80-90
+
+### 4.2 Bin the data
+```{r}
+# assign bins to subjects
+# training data
+adult.data.training.nb <- adult.data.training.nb %>% 
+  mutate(age = case_when(age <= 20 ~ 1, 
+                         ((age > 20) & (age <= 40)) ~ 2, 
+                         ((age > 40) & (age <= 60)) ~ 3, 
+                         ((age > 60) & (age <= 80)) ~ 4, 
+                         (age > 80) ~ 5))
+# testing data
+adult.data.testing.nb <- adult.data.testing.nb %>% 
+  mutate(age = case_when(age <= 20 ~ 1, 
+                         ((age > 20) & (age <= 40)) ~ 2, 
+                         ((age > 40) & (age <= 60)) ~ 3, 
+                         ((age > 60) & (age <= 80)) ~ 4, 
+                         (age > 80) ~ 5))
+# convert them to factors
+adult.data.training.nb$age <- as.factor(adult.data.training.nb$age)
+adult.data.testing.nb$age <- as.factor(adult.data.testing.nb$age)
+```
+
+### 4.3 Create a Naive Bayes classifier and make prediction
+```{r, warning = FALSE}
+# create classifier
+adult.model.nb <- NaiveBayes(class ~ age + edu + workclass + 
+                               sex + race + country, 
+                             data = adult.data.training.nb)
+# make prediction
+adult.pred.nb <- adult.model.nb %>% predict(adult.data.testing.nb)
+```
+
+## Question 5
+Build a confusion matrix for the classifier from (4) and comment on it, e.g., explain what it means.
+
+```{r}
+confusionMatrix(adult.pred.nb$class, adult.data.testing.nb$class)
+```
+From the confusion matrix, the classifier made 31655 predictions, overall prediction acuuracy is 0.789. True positive rate (sensitivity) is 0.382, true negative rate (specificity) is 0.921.
+
+## Question 6
+Create a full logistic regression model of the same features as in (4) (i.e., do not eliminate any features regardless of p-value). Be sure to either use dummy coding for categorical features or convert them to factor variables and ensure that the glm function does the dummy coding.
+
+### 6.1 Prepare the data set
+```{r}
+# create a copy for glm
+adult.data.training.glm <- adult.data.training
+adult.data.testing.glm <- adult.data.testing
+
+# create a function dummy codes
+dummy.adult <- function(data){
+  for (i in c(2, 4, 9, 10, 14)){
+    contrasts(data[ , i])
+  }
+}
+
+# convert workclass, education, sex, race, and native-country to dummy codes
+dummy.adult(adult.data.training.glm)
+dummy.adult(adult.data.testing.glm)
+```
+
+### 6.2 Create glm model and make prediction
+
+```{r}
+# create glm model
+adult.model.glm <- glm(class ~ age + edu + workclass + sex + race + country, 
+                       data = adult.data.training.glm, family = binomial)
+# summary the model
+summary(adult.model.glm)
+```
+From the summarization above, AIC of this model is 27775. Age, education, workclass, sex, and race are significant related to the class.
+
+```{r}
+# make prediction
+adult.pred.glm <- adult.model.glm %>% 
+  predict(adult.data.testing.glm, type = "response")
+head(adult.pred.glm)
+```
+The output is the probability of the class, however, it didn't indicate which classess do these probabilities refers to. Next I will use contrasts() function to check.
+
+```{r}
+contrasts(adult.data$class)
+```
+From the result, 1 is for lower class. Therefore, probability > 0.5 will be lower class, assign the binomial result as below.
+
+```{r}
+adult.pred.glm <- ifelse(adult.pred.glm > 0.5, "lower", "higher")
+```
+
+## Question 7
+Build a confusion matrix for the classifier from (5) and comment on it, e.g., explain what it means.
+
+```{r}
+confusionMatrix(as.factor(adult.pred.glm), adult.data.testing.glm$class)
+```
+From the confusion matrix, the classifier made 31655 predictions, overall prediction acuuracy is 0.792. True positive rate (sensitivity) is 0.365, true negative rate (specificity) is 0.935. The accuracy is slightly higher than Naive Bayes.
+
+## Question 8
+Build a function called predictEarningsClass() that predicts whether an individual makes more or less than US$50,000 and that combines the two predictive models from (4) and (6) into a simple ensemble. If the two models disagree on a prediction, then the prediction should be the one from the model with the higher accuracy -- make sure you do not hard code that as the training data may change over time and the same model may not be the more accurate forever.
+
+```{r}
+predictEarningsClass <- function(newdata){
+  # make two copies of new data for each model
+  data1 <- newdata
+  data2 <- newdata
+  # prepare new data
+  data1 <- data1 %>% mutate(age = case_when(age <= 20 ~ 1, 
+                                            ((age > 20) & (age <= 40)) ~ 2, 
+                                            ((age > 40) & (age <= 60)) ~ 3, 
+                                            ((age > 60) & (age <= 80)) ~ 4, 
+                                            (age > 80) ~ 5))
+  data1[ , 1] <- as.factor(data1[ , 1])
+  # make predictions using both models, Naive Bayes is pred1, 
+  # logistic regression is pred2
+  pred1 <- adult.model.nb %>% predict(data1)
+  pred2 <- adult.model.glm %>% predict(data2,  type = "response")
+  pred2 <- ifelse(pred2 > 0.5, "lower", "higher")
+  # calculate accuracy for both models
+  accuracy.nb <- mean(adult.pred.nb$class == adult.data.testing.nb$class)
+  accuracy.glm <- mean(adult.pred.glm == adult.data.testing.glm$class)
+  # return which model is better
+  better.model <- which.max(c(accuracy.nb, accuracy.glm))
+  # check if two models are making same predictions
+  if(any(adult.pred.glm != adult.pred.nb$class)){
+    print("Having different predictions")
+    # if better model is Naive Bayes, output is Naive Bayes results
+      if (better.model == 1){
+        print("Taking prediction from Naive Bayes")
+        pred.final <- pred1
+      }
+    # if better model is logistic regression, return its results
+    else{
+      print("Taking prediction from logistic regression")
+      pred.final <- pred2
+    }
+  }
+  # if two models are making same predictions, return one of them (pred1) 
+  else{
+    pred.final <- pred1
+  }
+  pred.final
+}
+```
+
+## Question 9
+Using the ensemble model from (8), predict whether a 47-year-old black female adult who is a local government worker with a Bacherlor's degree who immigrated from Honduras earns more or less than US$50,000.
+
+```{r, warning = FALSE}
+# create a data frame for the new data
+new.sbj <- data.frame("age" = 47, "workclass" = "Federal-gov", 
+                      "fnlwgt" = NA, "edu" = "Bachelors", 
+                      "edunum" = NA, "status" = NA, "occupation" = NA, 
+                      "relationship" = NA, "race" = "Black", 
+                      "sex" = "Female", "cgain" = NA, "closs" = NA, 
+                      "hrperweek" = NA, "country" = "Honduras", "class" = NA)
+# check column type
+sapply(new.sbj, class)
+# correct the column type
+new.sbj[ , -c(1, 3, 5, 11:13)] <- 
+  lapply(new.sbj[ , -c(1, 3, 5, 11:13)], as.factor)
+# make prediction
+new.sbj.pred <- predictEarningsClass(new.sbj)
+new.sbj.pred
+```
+From the information above, two models had different predictions, the function took result from logistic regression model as the final resutl. This new subject will likely to make less than $50,000.
+
+# Problem 2
+
+## Question 1
+Load and then explore this data set on car sales into a dataframe called cars.df. Exclude name (manufacturer and model) from the data -- do not use in any of the modeling going forward.
+
+```{r}
+# read in data file
+cars.df <- read.csv("CarDataSet.csv", header = TRUE)
+# remove name column
+cars.df <- cars.df[ , -1]
+# rename the columns for further use
+colnames(cars.df) <- c("year", "price", "driven", 
+                       "fuel", "seller", "transmission", "owner")
+```
+
+## Question 2
+Are there outliers in any one of the features in the data set? How do you identify outliers? Remove them but create a second data set with outliers removed called cars.no.df. Keep the original data set cars.df.
+
+### 2.1 Convert price and driven columns to z score
+```{r}
+# extract price and driven columns to a new data frame cars.df.norm and calculate z scores
+cars.df.norm <- as.data.frame(scale(cars.df[ , 2:3]))
+# rename the columns of cars.df.norm
+colnames(cars.df.norm) <- c("zPrice", "zDriven")
+# summarize the new normalized data frame
+summary(cars.df.norm)
+```
+From the summary table, both columns mean values are zero and don't have large IQR, however, both columns have extrame maximum values. Next I will plot figures to check the distribution of these two columns.
+
+### 2.2 Detect outliers
+```{r}
+# plot histograms to see the distributions
+hist(cars.df.norm$zPrice)
+hist(cars.df.norm$zDriven)
+# plot box plot and scatter plot to visualize outliers
+boxplot(cars.df.norm)
+axis(2, at = seq(-5, 15, 1))
+plot(cars.df.norm, xlim = c(-2, 16), ylim = c(-2, 16))
+```
+From plots above, z score larger than 2 are likely to be outliers. 
+
+### 2.3 Remove outliers
+```{r}
+# define outliers as 2 standard deviation away from mean
+outliers <- cars.df.norm %>% filter_all(any_vars(abs(.) > 2))
+# check how many outliers we have
+nrow(outliers)
+# add normalized price and driven columns back to the main data, as identifiers of outliers
+cars.no.df <- cbind(cars.df, cars.df.norm)
+# remove outliers
+cars.no.df <- cars.no.df %>% 
+  anti_join(outliers, by = c("zPrice", "zDriven")) %>% 
+  dplyr::select(-c(zPrice, zDriven))
+```
+
+## Question 3
+Using pairs.panel, what are the distributions of each of the features in the data set with outliers removed (cars.no.df)? Are they reasonable normal so you can apply a statistical learner such as regression? Can you normalize features through a log, inverse, or square-root transform? State which features should be transformed and then transform as needed and build a new data set, cars.tx.
+
+### 3.1 Create a pair panel
+```{r}
+# check column types
+sapply(cars.no.df, class)
+# create pairs panels 
+pairs.panels(cars.no.df[, 1:3], method = "pearson", 
+             hist.col = "#00AFBB", density = TRUE, ellipses = TRUE)
+# perform shpiro test to check the normality
+shapiro.test(cars.no.df$price)
+shapiro.test(cars.no.df$driven)
+```
+Form the panel above, the driven data is fairly normal, should be okay for regression. Price data is a bit skewed. I will try different transformation for these two data in the next step see if there is any improvement. Results from Shapiro test indicate both columns are not normally distributed.
+
+### 3.2 Try different transformations
+```{r}
+# create a min-max function
+minmax <- function(x){
+  return((x - min(x)) / (max(x) - min(x))) 
+}
+# transform price using min-max
+minMaxPrice <- minmax(cars.no.df$price) 
+# plot a histogram to check the distribution
+hist(minMaxPrice)
+# preform Shapiro test to check the normality
+shapiro.test(minMaxPrice)
+# transform price using z-score
+zPrice <- scale(cars.no.df$price) 
+hist(zPrice)
+shapiro.test(zPrice)
+# transform price using log
+logPrice <- log(cars.no.df$price) 
+hist(logPrice)
+shapiro.test(logPrice)
+# transfrom price using squared root
+sqrtPrice <- sqrt(cars.no.df$price) 
+hist(sqrtPrice)
+shapiro.test(sqrtPrice)
+# transform driven using min-max
+minMaxDriven <- minmax(cars.no.df$driven) 
+hist(minMaxDriven)
+shapiro.test(minMaxDriven)
+# transform driven using z-score
+zDriven <- scale(cars.no.df$driven) 
+hist(zDriven)
+shapiro.test(zDriven)
+# thransform driven using log
+logDriven <- log(cars.no.df$driven) 
+hist(logDriven)
+shapiro.test(logDriven)
+# transfrom driven using squared root
+sqrtDriven <- sqrt(cars.no.df$driven) 
+hist(sqrtDriven)
+shapiro.test(sqrtDriven)
+```
+From all attempts above, Shapiro test showed there was no actual improvement of normality. But from the distribution figures, log transformation for price and squraed rood transformation for driven seemed better.
+
+### 3.3 Create the tranformed data set
+```{r}
+# make a copy of cars.no.df
+cars.tx <- cars.no.df
+# replace price column with log transformed price
+cars.tx$price <- logPrice
+# replace driven column with squared root transformed driven
+cars.tx$driven <- sqrtDriven
+```
+
+## Question 4
+What are the correlations to the response variale (car sales price) for cars.no.df? Are there collinearities? Build a full correlation matrix.
+
+```{r}
+cor.matrix <- cor(cars.no.df[, 1:3])
+round(cor.matrix, 2)
+```
+From the matrix, year and price has strong positive relationship (0.58), year and drive has fairly strong negative relationship (-0.47).
+
+## Question 5
+Split the each of the three data set, cars.no.dr, cars.df, and cars.tx 75z5/25% so you retian 25% for testing using random sampling without replacement. Call the data sets, cars.training and cars.testing, cars.no.training and cars.no.testing, and cars.tx.training and cars.tx.testing.
+
+### 5.1 Prepare three datasets
+```{r}
+# check column types 
+sapply(cars.df, class)
+sapply(cars.no.df, class)
+sapply(cars.tx, class)
+# convert fuel, seller, transmission, and owner to factor columns
+cars.df[ ,4:7] <- lapply(cars.df[ , 4:7], factor)
+cars.no.df[ , 4:7] <- lapply(cars.no.df[ , 4:7], factor)
+cars.tx[ , 4:7] <- lapply(cars.tx[ , 4:7], factor)
+```
+
+### 5.2 Convert categorical columns to dummy codes
+```{r}
+# create a function to convert all columns together
+dummy.cars <- function(data){
+  for (i in 4:7){
+    contrasts(data[ , i])
+  }
+}
+# convert all categorical columns to dummy codes in these three data sets
+dummy.cars(cars.df)
+dummy.cars(cars.no.df)
+dummy.cars(cars.tx)
+```
+
+### 5.3 Split three datasets
+```{r}
+# split original dataset
+set.seed(400)
+train.sample.df <- sample(nrow(cars.df), nrow(cars.df) * 0.75)
+cars.df.training <- cars.df[train.sample.df, ]
+cars.df.testing <- cars.df[-train.sample.df, ]
+# split dataset without outliers
+set.seed(400)
+train.sample.no <- sample(nrow(cars.no.df), nrow(cars.no.df) * 0.75)
+cars.no.training <- cars.no.df[train.sample.no, ]
+cars.no.testing <- cars.no.df[-train.sample.no, ]
+# split transformed dataset
+set.seed(400)
+train.sample.tx <- sample(nrow(cars.tx), nrow(cars.tx) * 0.75)
+cars.tx.training <- cars.tx[train.sample.tx, ]
+cars.tx.testing <- cars.tx[-train.sample.tx, ]
+```
+
+## Question 6
+Build three full multiple regression models for predicting km-driven: one with cars.training, one with cars.no.training, and one with cars.tx.training, i.e., regression models that contains all features regardless of their p-values. Call the model reg.full, reg.no, and reg.tx.
+
+```{r}
+# build model with full training data
+reg.full <- lm(driven ~ ., data = cars.df.training)
+# summary the data
+summary(reg.full)
+# build model with training data without outliers
+reg.no <- lm(driven ~ ., data = cars.no.training)
+summary(reg.no)
+# build model with transformed data
+reg.tx <- lm(driven ~ ., data = cars.tx.training)
+summary(reg.tx)
+```
+
+## Question 7
+Build three ideal multiple regression models for cars.training, cars.no.training, and cars.tx.training using backward elimination based on p-value for predicting km-driven.
+
+### 7.1. Compare between features
+```{r}
+anova(reg.full)
+anova(reg.no)
+anova(reg.tx)
+```
+From the tables above, for all three models, price and transmission are not affecting the predictions a lot. Next I will try to remove the one with higher p value first, then try to remove both see which could improve the model more.
+
+### 7.2 Try different eliminations based on p-value
+```{r}
+# full data
+# remove transmission first since it has higher p value (0.98 vs. 0.15)
+reg.full.1 <- lm(driven ~ year + price + fuel + seller + owner, 
+                 data = cars.df.training)
+summary(reg.full.1)$r.squared
+# remove both transmission and price
+reg.full.2 <- lm(driven ~ year + fuel + seller + owner, 
+                 data = cars.df.training)
+summary(reg.full.2)$r.squared
+
+# data without outliers
+# remove price first since it has higher p value (0.46 vs. 0.13)
+reg.no.1 <- lm(driven ~ year + fuel + seller + transmission + owner, 
+               data = cars.no.training)
+summary(reg.no.1)$r.squared
+# remove both transmission and price
+reg.no.2 <- lm(driven ~ year + fuel + seller + owner, 
+               data = cars.no.training)
+summary(reg.no.2)$r.squared
+
+# transformed data
+# remove transmission first since it has higher p value (0.91 vs. 0.10)
+reg.tx.1 <- lm(driven ~ year + price + fuel + seller + owner, 
+               data = cars.tx.training)
+summary(reg.tx.1)$r.squared
+# remove both transmission and price
+reg.tx.2 <- lm(driven ~ year + fuel + seller + transmission + owner, 
+               data = cars.tx.training)
+summary(reg.tx.2)$r.squared
+```
+From the summary tables above, for all three datasets, the first model of each has a slightly higher r squared, indicating they fit each of their dataset better. Next I will further check AIC values.
+
+### 7.3 Compare between eliminated models for each data set
+```{r}
+# compare two models for full data
+model.sel(reg.full.1, reg.full.2)
+# compare two models for data without outliers
+model.sel(reg.no.1, reg.no.2)
+# compare two models for transformed data 
+model.sel(reg.tx.1, reg.tx.2)
+```
+From the result, for all three datasets, the first model of each is better since they have higher weight and lower AIC. Combined with the r squared results from step 7.2, the final models should be the first model of each.
+
+### 7.4 Make decision of ideal models
+```{r}
+reg.full.ideal <- reg.full.1
+reg.no.ideal <- reg.no.1
+reg.tx.ideal <- reg.tx.1
+# print the formula
+formula(reg.full.ideal)
+formula(reg.no.ideal)
+formula(reg.tx.ideal)
+```
+
+## Question 8
+Provide an analysis of the six models (using their respective testing data sets), including Adjusted R-Squared and RMSE. Which of these models is the best? Why?
+
+### 8.1 Make predictions using these six models
+```{r}
+# models with all features
+pred.full <- reg.full %>% predict(cars.df.testing)
+pred.no <- reg.no %>% predict(cars.no.testing)
+pred.tx <- reg.tx %>% predict(cars.tx.testing)
+# models after elimination
+pred.full.ideal <- reg.full.ideal %>% predict(cars.df.testing)
+pred.no.ideal <- reg.no.ideal %>% predict(cars.no.testing)
+pred.tx.ideal <- reg.tx.ideal %>% predict(cars.tx.testing)
+```
+
+### 8.2 Overall comparison between 6 models
+```{r}
+summary(cars.df.testing$driven)
+summary(pred.full)
+summary(pred.full.ideal)
+
+summary(cars.no.testing$driven)
+summary(pred.no)
+summary(pred.no.ideal)
+
+summary(cars.tx.testing$driven)
+summary(pred.tx)
+summary(pred.tx.ideal)
+```
+From this comparison table, for full data set, both pred.full and pred.ideal were not able to capture the extrame values, and on the lower end, they make negative predictions which doesn't make sense in real life. For data without outliers, both models did fairly well from Q1 to the Q3, but same as full data models, they made negative predictions on the lower end. For transformed data, both models did pretty good on the entire data set predictions. Next I will further compare adjusted r squraed value, MAE (mean absolute error), and RMSE (rooted mean squared error). Since tx data was transformed so they are on a different scale compared to full data and data without outliers, I will also compare RSE (residual standard error) to assess their accuracy.
+
+### 8.3 Compare adjusted r squared, MAE, RMSE, and RSE
+```{r}
+# create function for MAE calculation
+MAE <- function(actual, predicted){
+  mean(abs(actual - predicted))
+}
+# create function for RMSE calculation
+RMSE <- function(actual, predicted){
+  sqrt(mean(actual - predicted) ^ 2)
+}
+# create function for RSE calculation
+RSE <- function(model, dataset){
+  sigma(model) / mean(dataset$driven)
+}
+
+# create a table put everything together
+data.frame(model = c("full", "full.ideal", "no", "no.ideal", "tx", "tx.ideal"), 
+           AdjR2 = c(summary(reg.full)$adj.r.squared, 
+                     summary(reg.full.ideal)$adj.r.squared, 
+                     summary(reg.no)$adj.r.squared, 
+                     summary(reg.no.ideal)$adj.r.squared, 
+                     summary(reg.tx)$adj.r.squared, 
+                     summary(reg.tx.ideal)$adj.r.squared),
+           MAE = c(MAE(cars.df.testing$driven, pred.full), 
+                   MAE(cars.df.testing$driven, pred.full.ideal),
+                   MAE(cars.no.testing$driven, pred.no), 
+                   MAE(cars.no.testing$driven, pred.no.ideal),
+                   MAE(cars.tx.testing$driven, pred.tx), 
+                   MAE(cars.tx.testing$driven, pred.tx.ideal)), 
+           RMSE = c(RMSE(cars.df.testing$driven, pred.full), 
+                    RMSE(cars.df.testing$driven, pred.full.ideal), 
+                    RMSE(cars.no.testing$driven, pred.no), 
+                    RMSE(cars.no.testing$driven, pred.no.ideal), 
+                    RMSE(cars.tx.testing$driven, pred.tx), 
+                    RMSE(cars.tx.testing$driven, pred.tx.ideal)),
+           RSE = c(RSE(reg.full, cars.df.testing),
+                   RSE(reg.full.ideal, cars.df.testing),
+                   RSE(reg.no, cars.no.testing),
+                   RSE(reg.no.ideal, cars.no.testing),
+                   RSE(reg.tx, cars.tx.testing),
+                   RSE(reg.tx.ideal, cars.tx.testing)))
+```
+From the table above. Models trained with full data set (full and full.ideal) have the lowest adjusted r squared values with the highest MAE and RMSE, meaning they are not ideal models. Comparing between models trained with dataset without outliers (no and no.ideal) and models trained with transformed dataset (tx and tx.ideal), the models trained with transformed dataset (tx and tx.ideal) have the highest adjusted r squared values meaning they fit the data better. Since tx and tx.ideal are trained with transformed data, it is not comparable for MAE and RMSE values. Therefore, I use RSE values to compare between no and tx models, which gives a measure of error of prediction. Since tx and tx.ideal have lower RSE, meaning they have higher accuracy compare to no and no.ideal, I then only make selection between tx and tx.ideal. Given that tx has a silghtly higher adjusted r squared value and slightly lower RSE and RMSE, tx should be the best model.
+
+## Question 9 
+Using each of the prediction models, what are the predicted odometer readings (km_driven) of a 2004 vehicle that was sold by a dealer for 87,000, has a Diesel engine, a manual transmission, and is second owner? Why are the predictions different?
+
+### 9.1 Create a data frame for new data
+```{r}
+# new data frame
+new.car <- data.frame("year" = 2004, "price" = 87000, 
+                      "driven" = NA, "fuel" = "Diesel", "seller" = "Dealer", 
+                      "transmission" = "Manual", "owner" = "Second Owner")
+# convert column types
+sapply(new.car, class)
+new.car[ ,4:7] <- lapply(new.car[ , 4:7], factor)
+# transform the data as needed
+new.car.tx <- new.car
+new.car.tx$price <- log(new.car.tx$price)
+```
+
+### 9.2 Make predictions using each model
+```{r}
+new.car.pred1 <- reg.full %>% predict(new.car, interval = "prediction")
+new.car.pred2 <- reg.full.ideal %>% predict(new.car, interval = "prediction")
+new.car.pred3 <- reg.no %>% predict(new.car, interval = "prediction")
+new.car.pred4 <- reg.no.ideal %>% predict(new.car, interval = "prediction")
+new.car.pred5 <- reg.tx %>% predict(new.car.tx, interval = "prediction")
+new.car.pred6 <- reg.tx.ideal %>% predict(new.car.tx, interval = "prediction")
+# create a data frame with all the predictions
+# for tx models, square them
+new.car.pred <- data.frame(
+  model = c("full", "full.ideal", "no", "no.ideal", "tx", "tx.ideal"), 
+  predict = c(new.car.pred1[1], new.car.pred2[1], new.car.pred3[1], 
+              new.car.pred4[1], new.car.pred5[1] ^ 2, new.car.pred6[1] ^ 2))
+new.car.pred
+```
+The predictions made by models trained from data without outliers (no and no.ideal) were the lowest. In Question 8, I considered full and full.ideal are the least accurate models and tx as the best one. However, in this prediction, results from full and full.ideal model are very similar to tx model.
+
+## Question 10
+For each of the predictions, calculate the 95% prediction interval for the kilometers driven.
+
+```{r}
+# create a data frame with all the predictions and 95% of interval
+# predictions and calculations were made from Question 9
+# square all numbers generated by tx models
+new.car.pred <- new.car.pred %>% 
+  mutate(lower = c(new.car.pred1[2], new.car.pred2[2], 
+                   new.car.pred3[2], new.car.pred4[2], 
+                   new.car.pred5[2] ^ 2, new.car.pred6[2] ^ 2), 
+         upper = c(new.car.pred1[3], new.car.pred2[3], 
+                   new.car.pred3[3], new.car.pred4[3], 
+                   new.car.pred5[3] ^ 2, new.car.pred6[3] ^ 2))
+new.car.pred
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

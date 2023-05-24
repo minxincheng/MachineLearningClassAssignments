@@ -1,0 +1,417 @@
+---
+title: "PeerReview_6"
+author: Minxin Cheng
+output:
+  pdf_document: default
+  html_notebook: default
+---
+```{r}
+#install.packages("psych")
+#install.packages("rpart")
+#install.packages("rpart.plot")
+#install.packages("Cubist")
+#install.packages("randomForest")
+library(psych)
+library(gmodels)
+library(rpart)
+library(rpart.plot)
+library(RWeka)
+library(MuMIn)
+library(Cubist)
+library(randomForest)
+```
+
+# Problem 1
+
+## 0. Read in data file
+```{r}
+math <- read.table("student/student-mat.csv", 
+                   sep = ";", 
+                   header = TRUE)
+```
+
+## Question 1
+Create scatter plots and pairwise correlations between age, absences, G1, and G2 and final grade (G3) using the pairs.panels() function in R.
+```{r}
+# check if there is any missing values in the dataset
+any(is.na(math))
+# create a summary table to get an overview of the dataset
+summary(math)
+# create the panel
+pairs.panels(math[, c(3, 30:33)], 
+             method = "pearson", 
+             hist.col = "#00AFBB", 
+             density = TRUE, 
+             ellipses = TRUE)
+```
+From the panel, all five variables are not normally distributed. G1 and G2, G1 and G2, G2 and G3 showed strong and positive correlation, the ellipses over the fit line are very flat, also supported there are strong correlations between these variables.
+
+## Question 2
+Build a multiple regression model predicting final math grade (G3) using as many features as you like but you mush use at least four. Include at least one categorical variables and be sure to properly convert it to dummy codes. Select the features that you believe are useful -- you do not have to include all features.
+
+### 1. Check the normality of data
+```{r}
+# perform Shapiro test to see the normality of G3
+shapiro.test(math$G3)
+# plot a histogram to visually check
+hist(math$G3)
+```
+From the test result, p < 0.05 meaning G3 is not normality distribute. 
+
+### 2. Try different transformation
+```{r}
+# try min-max
+# create a min-max function
+normalize <- function(x){
+  return((x - min(x)) / (max(x) - min(x)))
+}
+# min-max transfer then check normality
+minMaxG3 <- normalize(math$G3)
+shapiro.test(minMaxG3)
+# z score transfer then check normality
+zG3 <- scale(math$G3)
+shapiro.test(zG3)
+# squred root transfer then check normality
+sqrtG3 <- sqrt(math$G3)
+shapiro.test(sqrtG3)
+```
+From the test result, normality didn't improve, will keep the original data.
+
+### 3. Create dummy codes
+Form all columns, I am interested in the following variables: age, mom education, dad education, travel time, study time, failures, paid, internet, romantic, freetime, absences, G1, and G2. In these variables, paid, internet, and romantic are characters, will convert them to dummy codes.
+```{r}
+# converth paid, internet, and romantic to dummy codes
+math$paid <- ifelse(math$paid == 'yes', 1, 0)
+math$internet <- ifelse(math$internet == 'yes', 1, 0)
+math$romantic <- ifelse(math$romantic == 'yes', 1, 0)
+```
+
+### 4. Pair panel to all the interested variables
+```{r, fig.width = 12, fig.height = 12} 
+pairs.panels(math[, c(3, 7:8, 13:15, 18, 22:23, 25, 30:33)], 
+             method = "pearson", 
+             hist.col = "#00AFBB", 
+             density = TRUE, 
+             ellipses = TRUE)
+```
+
+### 5. Created the first model with the entire dataset and all these interested variables
+```{r}
+# create the model
+fit <- lm(G3 ~ age + Medu + Fedu + traveltime +
+            studytime + failures + paid + internet + 
+            romantic + freetime + absences + 
+            G1 + G2, 
+          data = math)
+# summary the model
+summary(fit)
+# do plots to visualize
+plot(fit)
+```
+From the summary table, only absences, G1, and G2 individually has significant effect to G3. 
+From figure 1, the fit line in general straight, meaning it is generally a linear relationship. There are there data points are standing out meaning they are to far away that the model didn't capture them. They are extreme cases. The model might be improved them by removing them.
+Figure 2 is the visualization of the real residuals compared against to the theoretical distances from the model.
+Figure 3 showed the distribution of residuals around the linear model in relation to G3
+Figure 4 measured each data point's influence. From the figure, none of the extreme values have a huge impact on the model.
+
+## Question 3
+Using the model from (2), use stepwise backward elimination to remove all non-significant variables and then state the final model as an equation. State the backward elimination measure you applied (p-value, AIC, Adjusted R2).
+
+### 1. Performe stepwise backward elimination
+```{r}
+step(lm(G3 ~ age + Medu + studytime + failures + internet + 
+          romantic + absences + G1 + G2, data = math), 
+     direction = "backward")
+```
+The first model created above had an AIC 516.62, within these variables, mom education had the least effect (AIC 514.71) and G2 had the most effect (AIC 775.90). Therefore, Medu was dropped, the AIC then dropped a bit to 514.71. After few times of testing, the final model kept age, romantic, absences, G1, and G2. The equation of the model is: G3 = 0.93446 + (-0.17064) * age + (-0.40330) * absences + 0.18089 * G1 + 0.95515 * G2.
+
+### 2. Summary the model
+```{r}
+fit <- lm(G3 ~ age + failures + romantic + absences + 
+            G1 + G2, 
+          data = math)
+summary(fit)
+```
+From the summary table, the r2 value dropped a bit (from 0.8338 to 0.8311) and the adjusted r2 improved a bit (from 0.8285 to 0.8285)
+
+## Question 4
+Calculate the 95% confidence interval for a prediction -- you may choose any data you wish for some new student.
+
+### 1. Make prediction using the model
+```{r}
+# create a new column predG3 for the predicted G3 using the model
+math$predG3 <- predict(fit, 
+                       newdata = subset(math, 
+                                        select = c(G3, age, 
+                                                   failures, romantic, 
+                                                   absences, G1, G2)))
+```
+
+### 2. Calculate 95% confident interval
+```{r}
+# use the first subject's data to calculate, from the summary table in question 3, the standard error is 1.897
+math[1, 34] - 1.96 * 1.897
+math[1, 34] + 1.96 * 1.897
+```
+
+## Question 5
+What is the RMSE for this model -- use the entire data set for both training and validation. You may find the residuals() function useful.
+```{r}
+# calculate the rooted mean squared error
+mathRMSE <- sqrt(mean(residuals(fit) ^ 2))
+mathRMSE
+```
+The result on shows, on average, each of the estimate was 1.88 points away from what it should be.
+
+# Problem 2
+
+## Question 1
+Using the same data set as in Problem (1), add another column, PF -- pass-fail. Mark any student whose final grade is less than 10 as F, otherwise as P and then build a dummy code variable for that new column. Use the new dummy variable column as the response variable.
+```{r}
+# create the new PF column
+math$PF <- ifelse(math$G3 < 10, "F", "P")
+# create dummy codes
+math$PF <- as.factor(ifelse(math$PF == "F", 0, 1))
+```
+
+## Question 2
+Build a binomial logistic regression model classifying a student as passing or failing. Eliminate any non-significant variable using an elimination approach of your choice. Use as many features as you like but you must use at least four -- choose the ones you believe are most useful. 
+
+### 1. Create the first model using age, mom education, father education, study time, failures, paid, internet, romantic, freetime, absences, G1, and G2.
+```{r}
+# create the first model
+mathGlm_1 <- glm(PF ~ age + Medu + Fedu + traveltime + 
+                   studytime + failures + paid + internet + 
+                   romantic + freetime + absences + G1 + G2, 
+                 data = math, 
+                 family = binomial)
+# summary the model
+summary(mathGlm_1)
+```
+From the summary table, age, studytime, G1, and G2 can individually has signification effect to G3PF. Freetime, failures, and Medu have the highest p values (> 0.8), then is internet, paid, romantic, and absences (0.3 < p < 0.6). I will remove the highest three variables, then try the other 4.
+
+### 2. Create more models
+```{r}
+# only remove the highest 3
+mathGlm_2 <- glm(PF ~ age + Fedu + traveltime + studytime + paid + 
+                   internet + romantic + absences + G1 + G2, 
+                 data = math, 
+                 family = binomial)
+summary(mathGlm_2)
+# remove the highest 3 and internet and paid
+mathGlm_3 <- glm(PF ~ age + Fedu + traveltime + studytime + romantic + 
+                   absences + G1 + G2, 
+                 data = math, 
+                 family = binomial)
+summary(mathGlm_3)
+# remove the highest 3 and internet, paid, and romantic
+mathGlm_4 <- glm(PF ~ age + Fedu + traveltime + studytime +
+                   absences + G1 + G2, 
+                 data = math, 
+                 family = binomial)
+summary(mathGlm_4)
+# remove the highest 3 and internet, paid, and absences
+mathGlm_5 <- glm(PF ~ age + Fedu + traveltime + studytime + 
+                   romantic + G1 + G2, 
+                 data = math, 
+                 family = binomial)
+summary(mathGlm_5)
+# remove the highest 3 and internet, paid, absences, and romantic
+mathGlm_6 <- glm(PF ~ age + Fedu + traveltime + studytime + 
+                   G1 + G2, 
+                 data = math, 
+                 family = binomial)
+summary(mathGlm_6)
+```
+From the summaries above, PF ~ age + Fedu + traveltime + studytime + absences + G1 + G2 has the losest AIC value (140.5), the following model selection table (function from MuMIn package) will further compare the models.
+
+```{r}
+# create a model selection table
+model.sel(mathGlm_1, mathGlm_2, mathGlm_3, 
+          mathGlm_4, mathGlm_5, mathGlm_6)
+```
+The table listed in rank order based on decreasing quality of fit. Model 4 has the lowest AIC and highest weight. Therefore, I will use model 4 for prediction next.
+
+## Question 3
+State the regression equation.
+
+From question 2, the equation is PF = (-11.65194) + (-0.46871) * age + (-0.54390) * Fedu + 0.51525 * traveltime + (-0.68188) * study + 0.03631 * absences + 0.40555 * G1 + 1.97038 * G2.
+
+## Question 4
+What is the accuracy of your model? Use the entire data set for both training and validation
+
+### 1. Predict PF using the model selected above
+```{r}
+math$G3PF <- round(predict(mathGlm_4, math, type = "response"))
+```
+
+### 2. Evaluate the model performance
+```{r}
+# create a cross table
+CrossTable(math$PF, math$G3PF, 
+           prop.chisq = FALSE, 
+           prop.c = FALSE, 
+           prop.r = FALSE, 
+           dnn = c("actualPF", "predictedPF"))
+```
+From the table, the prediction accuracy is (116 + 253) / 395 = 0.934
+
+# Problem 3
+
+## Question 1
+Implement the example from the textbook on pages 205 to 217 for the data set on white wines.
+
+### 1. Read in data file
+```{r}
+wine <- read.csv("whitewines.csv")
+```
+
+### 2. Check the structure of the dataset
+```{r}
+str(wine)
+```
+
+### 3. Check the distribution of qulaity column
+```{r}
+hist(wine$quality)
+```
+From the figure, it is a fairly normal distribution. 
+
+### 4. Devide dataset to training data and test data
+```{r}
+wine_train <- wine[1:3750, ]
+wine_test <- wine[3751:4898, ]
+```
+
+### 5. Train a model
+```{r}
+# specify quality as the outcome variable and all the other columns as predictors
+m.rpart <- rpart(quality ~ ., data = wine_train)
+m.rpart
+# uncommand summary to see the detail of the tree
+#summary(m.rpart)
+```
+
+### 6. Visulaize the tree
+```{r}
+# plot the tree, digits control the number of numeric digits, fallen.leaves 
+# forces the leaf nodes to be aligned at the bottom of the plot, type and 
+# extra affect the way the tree being labeled
+rpart.plot(m.rpart, digits = 4, 
+           fallen.leaves = TRUE, 
+           type = 3, extra = 101)
+```
+
+### 7. Evaluating the performance
+```{r}
+# make the prediction
+p.rpart <- predict(m.rpart, wine_test)
+# a quick overview of the validation data and predicted data
+summary(p.rpart)
+summary(wine_test$quality)
+# check the correlation between the predicted and actual quality values
+cor(p.rpart, wine_test$quality)
+```
+From the summary data, the model didn't correctly predict the extreme cases (min and max). It is fairly well between the first and third quartile. The correlation number indicated a well correlation between the predictions and true value. Following code will further measure the performance with the mean absolute error.
+
+```{r}
+# create the function to calculate the mean absolute error
+MAE <- function(actual, predicted){
+  mean(abs(actual - predicted))
+}
+# calculate MAE between predicted value and true value
+MAE(p.rpart, wine_test$quality)
+```
+The number indicates that on average, the difference between the model's predictions and the true quality score was about 0.57. Since there are not a lot of extreme values, use the mean value as the predict value might also be good.
+
+```{r}
+# calculate the mean predicted quality value
+mean(wine_train$quality)
+# calculate MAE between mean value and true value
+MAE(5.88, wine_test$quality)
+```
+The mean absolute error is 0.58.
+
+### 7. Improve the model performance
+```{r}
+# build model tree using M5' algorithm
+m.m5p <- M5P(quality ~ ., data = wine_train)
+# summary the tree
+summary(m.m5p)
+```
+
+### 8. Make prediction using the new model
+```{r}
+p.m5p <- predict(m.m5p, wine_test)
+```
+
+### 9. Evaluate the new model
+```{r}
+# summary the prediction
+summary(p.m5p)
+# calculate the correlation
+cor(p.m5p, wine_test$quality)
+# calculate teh mean absolute error
+MAE(p.m5p, wine_test$quality)
+```
+
+## Question 2
+Calculate the RMSE for the model.
+```{r}
+# the original model's RMSE
+sqrt(mean(wine_test$quality - p.rpart) ^ 2)
+# the improved model's RMSE
+sqrt(mean(wine_test$quality - p.m5p) ^ 2)
+```
+Based on the original model, the predicted value is 0.15 points away from the actual value on average. However, the M5 model's result didn't make sense, this model might not be appropriate to this data set.
+
+## Try different algorism
+## Cubist
+```{r}
+# train Cubist model
+m.cubist <- cubist(x = wine_train[-12], y = wine_train$quality)
+# summary the tree
+summary(m.cubist)
+```
+
+### 1. Make prediction of using Cubist tree
+```{r}
+p.cubist <- predict(m.cubist, wine_test)
+summary(p.cubist)
+summary(wine_test$quality)
+```
+From the summary data, the model did pretty good on capturing extreme data, also for all the data in the middle
+
+### 2. Evaluate the preformance of Cubist tree
+```{r}
+cor(p.cubist, wine_test$quality)
+MAE(wine_test$quality, p.cubist)
+sqrt(mean(wine_test$quality - p.cubist) ^ 2)
+```
+The correlation is 0.56, which is good. MAE = 0.53 indicating that on average, the difference between the model's predictions and the true quality score was about 0.53, it is also lower then the original model. The RMSE value is 0.18, meaning each of the estimate was 0.18 points away from what it should be.
+
+Then I also tried another tree model as below
+## Random Forest
+```{r}
+# train the model
+m.forest <- randomForest(quality ~ ., data = wine_train)
+summary(m.forest)
+```
+
+```{r}
+# make prediction
+p.forest <- predict(m.forest, wine_test)
+summary(p.forest)
+summary(wine_test$quality)
+```
+From the summary, the model did fairly well, but not as good as Cubist model on estreme values.
+
+```{r}
+cor(p.forest, wine_test$quality)
+MAE(wine_test$quality, p.forest)
+sqrt(mean(wine_test$quality - p.forest) ^ 2)
+```
+The correlation was the strongest so far (0.61), and the MAE (0.52) and RMSE (0.16) are the lowest so far. Given this dataset doesn't have a lot of extreme values, this model might be the best for this dataset compared to rpart and Cubist.
+
+
+

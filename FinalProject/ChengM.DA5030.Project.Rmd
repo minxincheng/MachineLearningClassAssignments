@@ -1,0 +1,798 @@
+---
+title: "ChengM.DA5030.Project"
+author: "Minxin Cheng"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+---
+
+# Project Overview
+## 1. General dataset information
+The dataset I choose is Bike Sharing Dataset [1] (UCI Machine Learning Repository, URL: http://archive.ics.uci.edu/ml/datasets/Bike+Sharing+Dataset). The dataset is collected from an auto bike rental system called Capital Bike Sharing. 
+
+[1] Fanaee-T, Hadi, and Gama, Joao, 'Event labeling combining ensemble detectors and background knowledge', Progress in Artificial Intelligence (2013): pp. 1-15, Springer Berlin Heidelberg. 
+
+The original dataset includes 17 columns:
+
+- **instant** – continuous: record index
+- **dteday** – interval: date
+- **season** – categorical: season (1: winter; 2: spring; 3: summer; 4: fall)
+- **yr** – categorical: year (2011 to 2012)
+- **mnth** – interval: month (1 to 12)
+- **hr** – interval: hour (0 to 23)
+- **holiday** – categorical: if a day is holiday or not (1: yes; 0: no)
+- **weekday** – categorical: the day of the week (0: Sun, 1-6: Mon - Sat)
+- **workingday** – categorical: if a day is working day or not (1: yes; 0: no)
+- **weathersit** – categorical: how was the weather of that day 
+                  (1: clear, few clouds, partly cloudy; 
+                   2: mist + cloudy, mist+ broken clouds, mist+ broken clouds;
+                   3: light snow, light rain + thunderstorm + Scattered clouds;
+                   4: heavy rain + ice pallets + thunderstorm + mist,snow + fog)
+- **temp** – numeric: normalized temperature in Celsius (min-max)
+- **atemp** – numeric: normalized feeling temperature in Celsius (min-max)
+- **hum** – numeric: normalized humidity (raw / 100 (max hum))
+- **windspeed** – numeric: normalized wind speed (raw / 67 (max windspeed))
+- **casual** – numeric: count of casual users
+- **registered** – numeric: count of registered users
+- **cnt** – numeric: count of total rental bikes including both casual and registered
+
+## 2. Data Cleaning and transformaion
+### 2.1 Cleaning
+In this project, I removed:
+1) column "Instant", which is row number
+2) column "dteday", which can be represented by year and month
+3) column "workingday", which can be represented by weekday
+
+In this project, outliers in the numeric columns (temp, atemp, hum, windspeed, and count) are defined as 2.5 standard deviation from the mean value (z-score > 2.5), which ended up as about 6% of the cases were defined as outliers and were removed.
+
+### 2.2 Transformation
+1) Normalization: all the numeric columns (temp, atemp, hum, windspeed, and count) were kept as what they are in the original dataset after exploring of other possible transformations
+2) Feature engineering: hour column was transformed to bins of each 6 hours, four bins were generated as categories 1-4; the amount of casual user and regisitered user were transformed as the percentage of casual user in that day, calculated as casual / (casual + registered).
+
+### 2.3 Testing and identification
+1) Shaperio-Wilk test was used to evaluate distributions of the numeric columns
+2) prcomp() was used to identify principal component
+
+## 3. Algorithms used in this project
+1) Multiple linear regression: 
+  - lm() function was used to train multiple linear regression model
+  - Stepwise backward elimation was used to select potential optimal predictors.
+  - regsubsets() was used to further select optimal predictors by adjusted-R2, Cp, and BIC
+  - Adjusted-R2, MAE, RMSE, and RSE were used to select the best lm model
+  - A cross-validation with 10 folders was also used to further compare the models based on RMSE
+2) Neural network regression:
+  - hidden node was set as 1 given the limitation of computer capability
+3) Regression tree:
+  - rpart() function was used to generate regression trees
+  - A for loop was used to evaluate different minsplit and maxdepth combination
+  - MAE and RMSE were used to evaluate the performance
+4) Ensemble model based on above three models
+  - If any two models get a equal prediction in a new case, the final prediction will be this prediction
+  - Else it will be the prediction from the model with lowest RMSE
+  - MAE and RMSE were calculated to compare this ensemble model with each individual
+  - Cross-validation with 10 folders was used to further compare these 4 models based on RMSE
+ 
+---------------------------------------------------------------------------------------------------------------
+Below are my code for this final project.
+
+```{r, message = FALSE}
+#install.packages("googledrive")
+#install.packages("dplyr")
+#install.packages("ggplot2")
+#install.packages("psych")
+#install.packages("fastDummies")
+#install.packages("rsample")
+#install.packages("leaps")
+#install.packages("neuralnet")
+#install.packages("rpart")
+#install.packages("rpart.plot")
+library(gsheet)         # for downloading data file from google drive
+library(dplyr)          # for data organization
+library(ggplot2)        # for data visualization
+library(psych)          # for creating pair-panels
+library(fastDummies)    # for creating dummy codes
+library(rsample)        # for spliting training data and testing data
+library(caret)          # for creating folders for cross-validation
+library(leaps)          # for generating multiple linear regression models
+library(neuralnet)      # for creating neural network models
+library(rpart)          # for creating regression tree models
+library(rpart.plot)     # for regression tree visualization
+```
+
+# Step 1. Load the data
+## 1. Read in dataset
+```{r}
+url <- "https://docs.google.com/spreadsheets/d/1Kp7PnvkEW1ad2kaxp3mJAXlriEDMcEMu0oP_-E85YPQ/edit?usp=sharing"
+bike <- gsheet2tbl(url, sheetid = NULL)
+```
+
+# Step 2. Get an over overview of the data
+## 1. Check the data structure and get an overview of the dataset
+```{r}
+# check if there is any missing values
+any(is.na(bike))
+# check the structure of the dataset
+str(bike)
+```
+
+# Step 3. Clean up the dataset
+## 1. Remove the columns that will not be used for regression
+```{r}
+# create a percentage column of casual/registered
+bike <- bike %>% mutate(percentage = casual / (casual + registered))
+# 1) remove dteday column, which can be represented by season & year & month;
+# 2) remove casual and registered columns, 
+# which can be represented by cnt & percentage;
+# 3) remove workingday column, which can be represented by weekday
+bike <- bike[ , -c(2, 9, 15:16)]
+# randomize the rows
+bike <- bike[sample(nrow(bike)), ]
+```
+
+## 2. Transfer back the dataset to its original
+Some of the numeric columns of the data set has already been transferred (listed as below), for exploration, I will transfer them back first.
+
+The transferred columns in the dataset are: 
+
+1) temp column was min-max normalized, calculated as (t - tmin)/(tmax - tmin), tmin = -8, tmax = +39
+2) atemp column was min-max normalized, calculated as (at - atmin)/(atmax - atmin), atmin = -16, atmax = +50
+3) hum column was normalized by dividing by its maximum value, calculated as hum / 100 (max value of hum)
+4) windspeed column was normalized by dividing by its maximum value, calculated as windspeed / 67 (max value of windspeed)
+```{r}
+# create a copy for transferring back
+bike.raw <- bike
+# calculate the original temperature
+bike.raw$temp <- bike.raw$temp * (39 - (-8)) + (-8)
+# calculate the original feeling temperature
+bike.raw$atemp <- bike.raw$atemp * (50 - (-16)) + (-16)
+# calculate the original humidity
+bike.raw$hum <- bike.raw$hum * 100
+# calculate the original wind speed
+bike.raw$windspeed <- bike.raw$windspeed * 67
+```
+
+## 3. Check the outliers
+I will first convert all the numeric columns (tempeture, feeling tempeture, humidity, windspeed, cnt, and percentage) to z-scores, then filter all the data that is 2.5 standard deviations away from the mean.
+```{r}
+# select all numeric columns from the original dataset
+bike.checkoutlier <- bike.raw[ , c(1, 9:14)]
+# convert these numeric columns to z-scores
+bike.checkoutlier[ , c(2:7)] <- 
+  as.data.frame(scale(bike.checkoutlier[ , c(2:7)]))
+# filter out all outliers (as long as one z-score > 2.5 in a row)
+bike.outlier <- 
+  as.data.frame(bike.checkoutlier[apply(bike.checkoutlier[ , c(2:7)], 
+                                        1, function(x) any(abs(x) > 2.5)), ])
+# check how many rows were considered as outlier
+nrow(bike.outlier)
+nrow(bike.outlier) / nrow(bike.raw)
+```
+From the detection above, about 6% of the days data was considered as outliers, it is an acceptable proporation. I will removem them in the next step.
+
+## 4. Remove outliers
+```{r}
+# get the row numbers of outliers
+bike.outlier <- bike.outlier %>% select(instant)
+# remove the outliers from the dataset by row numbers
+bike.raw.clean <- bike.raw %>% 
+  anti_join(bike.outlier, by = "instant") %>% 
+  select(-instant)
+# remove the outliers from the original dataset by row numbers
+bike.ori.clean <- bike %>%
+  anti_join(bike.outlier, by = "instant") %>%
+  select(-instant)
+```
+
+## 5. Check the distributions and correlations of the dataset
+I will plot pair-panels to get the overall distributions and correlations of the dataset. I will make plots for both the outlier-removed original dataset and the outlier-removed raw data I calculated back.
+```{r}
+# plot the pair-panels for the outlier-removed original dataset
+pairs.panels(bike.ori.clean[, c(8:13)], method = "pearson", 
+             hist.col = "#00AFBB", density = TRUE, ellipses = TRUE)
+# plot the pair-panels for the outlier-removed raw dataset
+pairs.panels(bike.raw.clean[, c(8:13)], method = "pearson", 
+             hist.col = "#00AFBB", density = TRUE, ellipses = TRUE)
+```
+From the panels we can see that tempeature and feeling temperature have strong correlations with the proporation of casual users and the total count as well. Humidity also has relatively strong correlations with the total amount of users. Comparing to the raw data, the original dataset, which did transformation for some columns doesn't seem improve the distribution. I will quickly run a Shapiro test next to check the normality. Since I have already randomized the dataset, I will only select the first 5000 rows.
+```{r}
+shapiro.test(bike.ori.clean$temp[1:5000])
+shapiro.test(bike.ori.clean$atemp[1:5000])
+shapiro.test(bike.ori.clean$hum[1:5000])
+shapiro.test(bike.ori.clean$windspeed[1:5000])
+```
+As we see here, also from the Shapiro test results, these few transformed columns don't seem to be normally distributed, I will explore if there is any other way to transform the data in the next step. 
+
+## 6. Explore different transformations for the datasetd
+Here I will try z-score, squared, and square root transformation for temperature, feeling temperature, humidity, and windspeed see if I can improve them a bit.
+```{r}
+# try z-score transformation for temp
+z.temp <- scale(bike.ori.clean$temp)
+# un-commend to check the histogram
+# hist(z.temp)
+# run Shapiro test
+shapiro.test(z.temp[1:5000])
+# try squared the temperature
+squared.temp <- (bike.ori.clean$temp) ^2
+# un-commend to check the histogram
+# hist(squared.temp)
+# run Shapiro test
+shapiro.test(squared.temp[1:5000])
+# # try z-score transformation for temp
+z.atemp <- scale(bike.ori.clean$atemp)
+# un-commend to check the histogram
+# hist(z.atemp)
+# run Shapiro test
+shapiro.test(z.atemp[1:5000])
+
+squared.atemp <- (bike.ori.clean$atemp) ^2
+#hist(squared.atemp)
+shapiro.test(squared.atemp[1:5000])
+
+z.hum <- scale(bike.ori.clean$hum)
+#hist(z.hum)
+shapiro.test(z.hum [1:5000])
+
+squared.hum  <- (bike.ori.clean$hum) ^2
+#hist(squared.hum)
+shapiro.test(squared.hum[1:5000])
+
+sqrt.hum <- sqrt(bike.ori.clean$hum)
+#hist(sqrt.hum)
+shapiro.test(sqrt.hum[1:5000])
+
+log.hum <- log(bike.ori.clean$hum)
+#hist(log.hum)
+shapiro.test(log.hum[1:5000])
+
+z.windspeed <- scale(bike.ori.clean$windspeed )
+#hist(z.windspeed)
+shapiro.test(z.windspeed[1:5000])
+
+squared.windspeed <- (bike.ori.clean$windspeed) ^2
+#hist(squared.windspeed)
+shapiro.test(squared.windspeed[1:5000])
+
+sqrt.windspeed <- sqrt(bike.ori.clean$windspeed)
+#hist(sqrt.windspeed)
+shapiro.test(sqrt.windspeed[1:5000])
+
+log.windspeed <- log(bike.ori.clean$windspeed )
+#hist(log.windspeed)
+shapiro.test(log.windspeed[1:5000])
+```
+
+From all the exploration above, it seems nothing has been improved from min-max normalization and divided by max value methods that the dataset already used. Therefore, I will keep using the original data for temp, atemp, hum, and windspeed columns. Next I will try what could be good for casual and register columns.
+```{r}
+# create a function for min-max transform
+minmax <- function(x){
+  return((x - min(x)) / (max(x) - min(x)))
+}
+
+# try min-max to percentage column
+minmax.percentage <- minmax(bike.ori.clean$percentage)
+# check the distribution
+# hist(minmax.percentage)
+# run Shapiro test
+shapiro.test(minmax.percentage[1:5000])
+# try z-score for percentage column
+z.percentage <- scale(bike.ori.clean$percentage)
+# check the distribution
+# hist(z.percentage)
+# run Shapiro test
+shapiro.test(z.percentage[1:5000])
+# try z-score for percentage column
+squared.percentage <- (bike.ori.clean$percentage) ^2
+# hist(squared.percentage)
+shapiro.test(squared.percentage[1:5000])
+# try z-score for percentage column
+sqrt.percentage <- sqrt(bike.ori.clean$percentage)
+# hist(sqrt.percentage)
+shapiro.test(sqrt.percentage[1:5000])
+
+# try min-max to cnt column
+minmax.cnt <- minmax(bike.ori.clean$cnt)
+# check the distribution
+# hist(minmax.cnt)
+# run Shapiro test
+shapiro.test(minmax.cnt[1:5000])
+# try z-score for cnt column
+z.cnt <- scale(bike.ori.clean$cnt)
+# check the distribution
+# hist(z.cnt)
+# run Shapiro test
+shapiro.test(z.cnt[1:5000])
+# try z-score for cnt column
+squared.cnt <- (bike.ori.clean$cnt) ^2
+# hist(squared.cnt)
+shapiro.test(squared.cnt[1:5000])
+# try z-score for cnt column
+sqrt.cnt <- sqrt(bike.ori.clean$cnt)
+# hist(sqrt.cnt)
+shapiro.test(sqrt.cnt[1:5000])
+```
+From the Shapiro test results and the distribution figures, no transformation is good enough, I will not transform the cnt column and percentage column.
+
+## 7. Identify principal components (PCA)
+Here I will perform a PCA identifier to check the PCA of the dataset.
+```{r}
+# perform the PCA identifier for only the numeric columns
+bike.pca <- prcomp(bike.ori.clean[ , 8:13], center = TRUE, scale = TRUE)
+bike.pca
+# summary the PCA identifier
+summary(bike.pca)
+```
+In this table, standard deviation are the eigenvalues since the data has been scaled; proportion of variance is the amount variance the component accounts for in the data that PC1 has already accounted for about 43% of total variance; cumulative proportion is the accumulated amount of explained variance. Below I am trying to visualize the relationship between the PCs and variance.
+```{r}
+# plot the relationship between variance and each pc
+screeplot(bike.pca, type = "l", npcs = 6, main = "Plot of all PCs")
+abline(h = 1, col ="red")
+legend("topright", legend = c("Eigenvalue = 1"), col = c("red"), cex = 0.6)
+# plot the relationship between cumulative variance and each pc
+cumpro <- cumsum(bike.pca$sdev ^ 2 / sum(bike.pca$sdev ^ 2))
+plot(cumpro[0:6], xlab = "PC #", ylab = "Amount of variance", 
+     main = "Cumulative variance plot")
+abline(v = 2, col = "blue")
+abline(h = 0.6570, col = "blue")
+legend("topleft", legend = c("Cut-off at PC2"), col = "blue", cex = 0.6)
+```
+From the plots above, we can see the first 2 components has an eigenvalue greater than 1 and they explained about 65% of variance, which is fairly well. Since the data also has many categorical variables, it is not necessary to furtherly use principal component regression (PCR).
+
+# Step 4. Prepare the dataset
+## 1. Create dummy code for the dataset
+```{r}
+# create a copy for dummy coding
+bike.dummy <- bike.ori.clean
+# group the hour column to bins:
+# 0-5: bin 1
+# 6-11: bin 2
+# 12-17: bin 3
+# 18-23: bin 4
+bike.dummy <- bike.dummy %>% 
+  mutate(hrbin = case_when(hr <= 5 ~ 1, 
+                           ((hr >= 6) & (hr <= 11)) ~ 2, 
+                           ((hr >= 12) & (hr <= 17)) ~ 3, 
+                           ((hr >= 18) & (hr <= 23)) ~ 4)) %>% select(-hr)
+# convert season, month, holiday, weekday, weathersit, and 
+# the new hour bin column to factor
+bike.dummy[, c(1, 3:6, 13)] <- lapply(bike.dummy[, c(1, 3:6, 13)], 
+                                             as.factor)
+# quick summary of the data to get an overview
+summary(bike.dummy)
+# dummy code all the categorical columns
+bike.dummy <- dummy_cols(bike.dummy, 
+                         select_columns = c("season", "mnth", "hrbin", 
+                                            "holiday", "weekday", "weathersit"), 
+                         remove_first_dummy = TRUE)
+# remove the original categorical columns
+bike.dummy <- bike.dummy[ , -c(1, 3:6, 13)]
+# check the structure
+str(bike.dummy)
+```
+
+## 2. Split the dataset for training and testing
+```{r}
+# split the dataset to 80%/20%
+set.seed(123)
+train.sample <- initial_split(bike.dummy, prop = 0.8, strata = "cnt")
+bike.training <- training(train.sample)
+bike.testing <- testing(train.sample)
+# make a copy of training data and testing data for multiple linear regression
+bike.training.lm <- training(train.sample)
+bike.testing.lm <- testing(train.sample)
+# make a copy of training data and testing data for neural network
+bike.training.ann <- training(train.sample)
+bike.testing.ann <- testing(train.sample)
+# make a copy of training data and testing data for regression tree
+bike.training.tree <- training(train.sample)
+bike.testing.tree <- testing(train.sample)
+```
+
+# Step 5. Multiple linear regression
+## 1. Train the first model
+I will first train the multiple linear regression with all the columns.
+```{r}
+set.seed(123)
+# train the first model
+bike.model.lm1 <- lm(cnt ~ ., data = bike.training.lm)
+# get an overview of the model
+summary(bike.model.lm1)
+```
+From the summary table above, the overall R squared value is fairly well (R2 = 0.524), year, tempeture, humidity, season, month, hour in a day, holiday, weekday, wheather situation, and the proporation of casual user all showed strong relationship with the total amount of bike rental. I will next do Cook's Distance and Leverage plots to check if the top influential cases.
+
+```{r}
+# Cooks Distance plot
+plot(bike.model.lm1, which = 4, id.n = 5)
+# Leverage plot
+plot(bike.model.lm1, which = 5, id.n = 5)
+```
+From the plots, we can see the top 5 influential cases. From Leverage plot we can see that none of these observations is having a huge impact on the model. 
+
+## 2. Perform stepwise backward elimination
+Here I will first do a quick backward elimination using AIC to see if I can improve the model.
+```{r}
+# perform stepwise backward elimination
+bike.model.lm2 <- step(bike.model.lm1, direction = "backward")
+# summary the model
+summary(bike.model.lm2)
+```
+We can see here that the stepwise backward elimination didn't improve the model a lot. Next I will different ways of selecting predictors.
+
+## 3. Explore other ways of selecting predictors
+I tried to use AIC as a criteria to select best model in last step. Now I will try to us adjusted R square, Mallows' Cp, and BIC to select predictors.
+
+Mallows' Cp-statistic estimates the size of the bias that is introduced into the predicted responses by having an underspecified model. Subset models with small Cp values have a small estimated total (standardized) variation in predicted responses. If all models, except the full model, yield a large Cp not near k+1, meaning some important predictor(s) are missing from the analysis; If a number of models have Cp near k+1, the model with the smallest Cp value are the best one, which insures that the combination of the bias and the variance is at a minimum.
+
+BIC is an estimate of a function of the posterior probability of a model being true, a lower BIC means that a model is considered to be more likely to be the true model. Comparing to AIC, AIC tries to select the model that most adequately describes an unknown, high dimensional reality, while BIC tries to find the "true" model among the set of potential models. 
+
+Here I perform a subset search using regsubsets (package "leaps"), which identifies the best model for a given number of k predictors, where best is quantified using RSS. The nvmax option can be used in order to return as many variables as are desired. I use 33-variable model here.
+```{r}
+# perform a subset search
+subset.lm <- regsubsets(cnt ~ ., data = bike.training.lm, nvmax = 33)
+# access to the result
+results.lm <- summary(subset.lm)
+# create a data frame with all adjusted-R2 values, Cp values, and BIC values,
+# then make plots to visualize them
+data.frame(predictors = as.integer(c(1:33)), 
+           Adj.R2 = results.lm$adjr2, 
+           Cp = results.lm$cp, 
+           BIC = results.lm$bic) %>%
+  gather(statistic, value, -predictors) %>%
+  ggplot(aes(predictors, value, color = statistic)) +
+  geom_line(show.legend = FALSE) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~ statistic, scales = "free") +
+  theme_light()
+# report the maximum adjusted-R2, minimum Cp, and minimum BIC
+which.max(results.lm$adjr2)
+which.min(results.lm$cp)
+which.min(results.lm$bic)
+```
+From the results, adjusted R2 suggested a 27-variable model, Cp suggestes a 23-variable model, and BIC suggested a 18-variable model. I will further check the coefficients of these suggested models.
+
+```{r}
+# check the coefficients of thest models
+coef(subset.lm, 27)
+coef(subset.lm, 23)
+coef(subset.lm, 18)
+# create corresponding models
+# get all the predictors selected by these models respectively
+names.r2 <- names(coef(subset.lm, 27))
+names.cp <- names(coef(subset.lm, 23))
+names.bic <- names(coef(subset.lm, 18))
+names.r2 <- names.r2[!names.r2 %in% "(Intercept)"]
+names.cp <- names.cp[!names.cp %in% "(Intercept)"]
+names.bic <- names.bic[!names.bic %in% "(Intercept)"]
+# create forumla for these models respectively
+formula.r2 <- as.formula((paste("cnt", 
+                                paste(names.r2, collapse = "+"), sep = "~")))
+formula.cp <- as.formula((paste("cnt", 
+                                paste(names.cp, collapse = "+"), sep = "~")))
+formula.bic <- as.formula((paste("cnt", 
+                                 paste(names.bic, collapse = "+"), sep = "~")))
+# generate models
+bike.model.lm3 <- lm(formula.r2, data = bike.training.lm)
+bike.model.lm4 <- lm(formula.cp, data = bike.training.lm)
+bike.model.lm5 <- lm(formula.bic, data = bike.training.lm)
+```
+
+## 4. Evaluate models performance with holdout method
+In this step, I will generate a table for adjusted-R2, MAE (mean absolute error), RMSE (rooted mean squared error), and RSE (residual standard error) for all the 5 models I created before to compare between them. 
+```{r}
+# make predictions using 5 models
+bike.pred.lm1 <- predict(bike.model.lm1, newdata = bike.testing.lm)
+bike.pred.lm2 <- predict(bike.model.lm2, newdata = bike.testing.lm)
+bike.pred.lm3 <- predict(bike.model.lm3, newdata = bike.testing.lm)
+bike.pred.lm4 <- predict(bike.model.lm4, newdata = bike.testing.lm)
+bike.pred.lm5 <- predict(bike.model.lm5, newdata = bike.testing.lm)
+# create functions to calculate MAE, RMSE, and RSE
+# MAE
+MAE <- function(actual, predicted){
+  mean(abs(actual - predicted))
+}
+# RMSE
+RMSE <- function(actual, predicted){
+  sqrt(mean(actual - predicted) ^ 2)
+}
+# RSE
+RSE <- function(model, dataset){
+  sigma(model) / mean(dataset$cnt)
+}
+# generate a table to compare everything together
+data.frame(model = c("lm1", "lm2", "lm3", "lm4", "lm5"), 
+           Adj.R2 = c(summary(bike.model.lm1)$adj.r.squared, 
+                      summary(bike.model.lm2)$adj.r.squared, 
+                      summary(bike.model.lm3)$adj.r.squared,
+                      summary(bike.model.lm4)$adj.r.squared,
+                      summary(bike.model.lm5)$adj.r.squared), 
+           MAE = c(MAE(bike.testing.lm$cnt, bike.pred.lm1), 
+                   MAE(bike.testing.lm$cnt, bike.pred.lm2),
+                   MAE(bike.testing.lm$cnt, bike.pred.lm3),
+                   MAE(bike.testing.lm$cnt, bike.pred.lm4),
+                   MAE(bike.testing.lm$cnt, bike.pred.lm5)), 
+           RMSE = c(RMSE(bike.testing.lm$cnt, bike.pred.lm1), 
+                    RMSE(bike.testing.lm$cnt, bike.pred.lm2),
+                    RMSE(bike.testing.lm$cnt, bike.pred.lm3),
+                    RMSE(bike.testing.lm$cnt, bike.pred.lm4),
+                    RMSE(bike.testing.lm$cnt, bike.pred.lm5)), 
+           RSE = c(RSE(bike.model.lm1, bike.testing.lm), 
+                   RSE(bike.model.lm2, bike.testing.lm), 
+                   RSE(bike.model.lm3, bike.testing.lm),
+                   RSE(bike.model.lm4, bike.testing.lm),
+                   RSE(bike.model.lm5, bike.testing.lm)))
+```
+From the table above, there is no single model stands out. Model 2 has the lowest MAE and RMSE values, I would say for now, it is the best model. Next I will try cross-validation to see which one is better than others. 
+
+## 5. Evaluate models performance with k-fold cross-validation
+```{r}
+set.seed(123)
+# create 10 folders from the cleaned dummy dataset
+folds.lm <- createFolds(bike.dummy$cnt, k = 10)
+# create a list for all 5 models for easier access below
+models.lm <- paste0("bike.model.lm", 1:5)
+# create a function to calculate RMSE values for all folder
+# for specific model i
+cvRMSE <- function(i){
+  # calculate RMSE for each folder
+  lapply(folds.lm, function(x){
+    # create a training data
+    bike.training.cv <- bike.dummy[-x, ]
+    # create a testing data
+    bike.testing.cv <- bike.dummy[x, ]
+    # get the specific model i
+    bike.model <- get(models.lm[i])
+    # make prediction
+    bike.pred <- predict(bike.model, bike.testing.cv)
+    # get the actual value
+    bike.actual <- bike.testing.cv$cnt
+    # calculate the RMSE value
+    RMSE <- RMSE(bike.actual, bike.pred)
+    return(RMSE)
+  })
+}
+# apply the function to each model to calculate mean RMSE across 10 folders
+mean(unlist(cvRMSE(1)))
+mean(unlist(cvRMSE(2)))
+mean(unlist(cvRMSE(3)))
+mean(unlist(cvRMSE(4)))
+mean(unlist(cvRMSE(5)))
+```
+Based on the result, Model 2 is the second best one, conbined with the comparison of adjusted R2, MAE, RMSE, and RSE, I will select Model as the final multiple linear regression model.
+```{r}
+bike.model.lm.final <- bike.model.lm2
+```
+
+# Step 6. Nerual Network
+## 1. Train the first model
+I will first train the neural network model with one hidden layer.
+```{r}
+set.seed(123)
+# train the model
+bike.model.ann <- neuralnet(cnt ~ ., data = bike.training.ann, threshold = 0.2)
+# plot the network
+plot(bike.model.ann, rep = "best", information = TRUE, information.pos = 0.1)
+```
+
+## 2. Evaluate the model's performance
+Since adding hidden nodes is very time consuming given my local computer's capability. I will keep the first model as the final model of neural network and use it for ensembling and evaluation with all the other models. I will first evaluate its performance here to see if it is good in general.
+```{r}
+# make predictions
+bike.pred.ann <- compute(bike.model.ann, bike.testing.ann[ , c(1:5, 7:34)])
+# convert the prediction results to a data frame
+bike.pred.ann <- as.data.frame(bike.pred.ann$net.result)
+# generate a table with correlation, MAE, and RMSE of the model
+data.frame(model = "ann", 
+           cor = cor(bike.pred.ann$V, bike.testing.ann$cnt), 
+           MAE = MAE(bike.testing.ann$cnt, bike.pred.ann$V1), 
+           RMSE = RMSE(bike.testing.ann$cnt, bike.pred.ann$V1))
+```
+From the table above, we can see the correlation is 0.72, which is fairly strong linear relationship, and the MAE and RMSE are even lower than all the 5 multiple linear regression models.
+```{r}
+bike.model.ann.final <- bike.model.ann
+```
+
+# Step 7. Regression tree
+## 1. Train the first model
+Here I will train the first tree and let it select the splits of the nodes.
+```{r}
+set.seed(123)
+# train a tree using all columns
+bike.model.tree1 <- rpart(cnt ~ ., data = bike.training.tree, method = "anova")
+bike.model.tree1
+# plot to visualize the tree
+rpart.plot(bike.model.tree1)
+```
+We can see without any limitation, the tree used 13 predictors to produce this model. It is the results from the application and selection from different complexity parameter (cp) that rpart did behind, that rpart automatically applyed a range of cost complexity (α) values to prune the tree. To compare the error for each α value, rpart performs a 10-fold cross validation so that the error associated with a given α value is computed on the validation data. I will then explore if this predictors selection is the most optimized.
+
+```{r}
+# plot the cp, tree size, and error relationship
+plotcp(bike.model.tree1)
+# print the table of cp, tree size, and error
+bike.model.tree1$cptable
+```
+We can see from the plot, rpart automatically selected the smallest tree size within 1 standard deviation of the minimum cross validation error, which is 13 in this model with a cross-validated error of 0.54. 
+
+## 2. Explore metohd to improve the model
+As I decribed above, rpart performs tuning based on cp value automatically, which returned a tree of 13 splits and 14 terminal nodes, with a cross-validated error of 0.54. Next I will try to perform other types of tuning to see if they can improve the model performance.
+
+In addition to the cost complexity (α) parameter, it is also common to tune:
+
+**minsplit**: the minimum number of data points required to attempt a split before it is forced to create a terminal node. The default value is 20. Lowering this value will keep those terminal nodes that may contain only a handful of observations to create the predicted value.
+
+**maxdepth**: the maximum number of internal nodes between the root node and the terminal nodes. The default value is 30. Changing this values allows different sizes of a tree.
+
+Here I will create a for loop to automatically try different combinations of minsplit and maxdepth.
+```{r}
+# create a grid for different minsplit and maxdepth values
+# for minsplit, I use the range from 5-20 given that the maximum value of 
+# minsplit can go is 20
+# for maxdepth, I use the range from 10-20 since the first model returned a
+# tree with an optimal depth of 13
+combo.crtl <- expand.grid(minsplit = seq(5, 20, 1), maxdepth = seq(10, 20, 1))
+# check the first few rows of the matrix
+head(combo.crtl)
+# create an empty list for models that going to be generated
+models.tree <- list()
+# create a for loop to run through each combinations of minsplit and maxdepth
+for(i in 1:nrow(combo.crtl)){
+  # get minsplit and maxdepth values in that row
+  minsplit <- combo.crtl$minsplit[i]
+  maxdepth <- combo.crtl$maxdepth[i]
+  # train the model with this combination and store it in the model list
+  models.tree[[i]] <- rpart(cnt ~., 
+                       data = bike.training.tree, 
+                       method = "anova", 
+                       control = list(minsplit = minsplit, maxdepth = maxdepth))
+}
+```
+Next I will create a function to extract the minimum error associated with the optimal cost complexity α value for each model. 
+```{r}
+# function to get optimal cp
+get.cp <- function(x){
+  min <- which.min(x$cptable[ , "xerror"])
+  cp <- x$cptable[min, "CP"]
+}
+# function to get minimum error
+get.minerror <- function(x){
+  min <- which.min(x$cptable[ , "xerror"])
+  xerror <- x$cptable[min, "xerror"]
+}
+# generate a table with the information of minsplit and maxdepth,
+# and the optimal cp value and error just calculated
+# then only keep the top 5 models with minimum error
+combo.crtl <- combo.crtl %>% 
+  mutate(error = purrr::map_dbl(models.tree, get.minerror)) %>% 
+  arrange(error) %>% 
+  top_n(-5, wt = error)
+combo.crtl
+```
+We can see from the table, then minsplit equals 12 and maxdepth equals 20, the model has the smallest error 0.53. Next I will use this model to compare with the original tree model I generated at the first step.
+
+## 3. Evaluate models performance
+```{r}
+# train the model using the optimal minsplit and maxdepth values
+bike.model.tree2 <- rpart(cnt ~ ., 
+                          data = bike.training.tree, 
+                          method = "anova", 
+                          control = list(cp = 0, minsplit = 12, maxdepth = 20))
+bike.model.tree1$cptable
+# make predictions using these two models
+bike.pred.tree1 <- predict(bike.model.tree1, newdata = bike.testing.tree)
+bike.pred.tree2 <- predict(bike.model.tree2, newdata = bike.testing.tree)
+# generate a table to compare everything together
+data.frame(model = c("tree1", "tree2"), 
+           MAE = c(MAE(bike.testing.tree$cnt, bike.pred.tree1), 
+                   MAE(bike.testing.tree$cnt, bike.pred.tree2)), 
+           RMSE = c(RMSE(bike.testing.tree$cnt, bike.pred.tree1), 
+                    RMSE(bike.testing.tree$cnt, bike.pred.tree2)))
+```
+From the table above, the MAE and RMSE are both reduced a lot from setting minsplit and maxdepth (MAE from 80.78 to 64.52, RMSE from 1.08 to 0.50). I will set the second model as the final tree model.
+```{r}
+bike.model.tree.final <- bike.model.tree2
+```
+
+# Step 8. Ensemble model
+## 1. Create a ensamble model
+In this step, I will create a function to ensemble all three models that were generated before (lm.final, ann.final, and tree.final). If any two models make same prediction on one case, I will keep this prediction. If all three models make different prediction in one case, I will keep the one prediction made by the model with the lowest RMSE.
+```{r}
+# create the ensemble function
+predict.cnt <- function(newdata){
+  # copy new data for each model
+  data.lm <- newdata
+  data.ann <- newdata
+  data.tree <- newdata
+  # make predictions
+  pred.lm <- predict(bike.model.lm.final, newdata[ , c(1:5, 7:34)])
+  pred.ann <- compute(bike.model.ann.final, newdata[ , c(1:5, 7:34)])
+  pred.tree <- predict(bike.model.tree.final, newdata[ , c(1:5, 7:34)])
+  # combine all predictions to one data frame
+  pred <- data.frame(pred.lm = pred.lm, 
+                     pred.ann = pred.ann$net.result, 
+                     pred.tree = pred.tree)
+  # calculate RMSE for each model
+  RMSE.lm <- RMSE(newdata$cnt, pred.lm)
+  RMSE.ann <- RMSE(newdata$cnt, pred.ann$net.result)
+  RMSE.tree <- RMSE(newdata$cnt, pred.tree)
+  # return the model index that has the lowest RMSE
+  best.model.idx <- which.min(c(RMSE.lm, RMSE.ann, RMSE.tree))
+  # add a new column in pred data frame with the final selection for each case
+  # if any of two models agree with each other, will keep this prediction
+  # else it will select the prediction from the model with lowest RMSE
+  pred$pred.final <- ifelse(pred.lm == pred.ann$net.result, 
+                            pred.lm, 
+                            ifelse(pred.lm == pred.tree, pred.lm, 
+                                   ifelse(pred.ann$net.result == pred.tree, 
+                                          pred.ann$net.result, 
+                                          pred[ , best.model.idx])))
+  # output the final selection
+  return(pred)
+}
+# use this ensemble model to make prediction
+bike.pred.ensemble <- predict.cnt(bike.testing)
+```
+
+## 2. Evaluate the ensamble model
+Next I will compare this ensemble model's performance with each individual model using MAE and RMSE.
+```{r}
+# generate a table for comparing each individual model and the ensemble model
+data.frame(model = c("lm.final", "ann.final", "tree.final", "model.ens"), 
+           MAE = c(MAE(bike.testing$cnt, bike.pred.ensemble$pred.lm), 
+                   MAE(bike.testing$cnt, bike.pred.ensemble$pred.ann),
+                   MAE(bike.testing$cnt, bike.pred.ensemble$pred.tree),
+                   MAE(bike.testing$cnt, bike.pred.ensemble$pred.final)), 
+           RMSE = c(RMSE(bike.testing$cnt, bike.pred.ensemble$pred.lm), 
+                    RMSE(bike.testing$cnt, bike.pred.ensemble$pred.ann),
+                    RMSE(bike.testing$cnt, bike.pred.ensemble$pred.tree),
+                    RMSE(bike.testing$cnt, bike.pred.ensemble$pred.final)))
+```
+As we see from the table, the ensemble model seems has no difference from tree model. Next I will run a cross-validation same as the function I created before to check the mean RMSE of each model.
+
+```{r}
+set.seed(123)
+# create 10 folders from the cleaned dummy dataset
+folds <- createFolds(bike.dummy$cnt, k = 10)
+# calculate mean RMSE values across all folder for each model
+# for lm model
+cvRMSE.lm <- lapply(folds, function(x){
+  training.cv <- bike.dummy[-x, ]
+  testing.cv <- bike.dummy[x, ]
+  pred.cv <- predict(bike.model.lm.final, testing.cv)
+  rmse.lm <- RMSE(testing.cv$cnt, pred.cv)
+})
+# for ann model
+cvRMSE.ann <- lapply(folds, function(x){
+  training.cv <- bike.dummy[-x, ]
+  testing.cv <- bike.dummy[x, ]
+  pred.cv <- compute(bike.model.ann.final, testing.cv)
+  pred.cv <- pred.cv$net.result
+  rmse.ann <- RMSE(testing.cv$cnt, pred.cv)
+})
+# for tree model
+cvRMSE.tree <- lapply(folds, function(x){
+  training.cv <- bike.dummy[-x, ]
+  testing.cv <- bike.dummy[x, ]
+  pred.cv <- predict(bike.model.tree.final, testing.cv)
+  rmse.tree <- RMSE(testing.cv$cnt, pred.cv)
+})
+# for ens model
+cvRMSE.ens <- lapply(folds, function(x){
+  training.cv <- bike.dummy[-x, ]
+  testing.cv <- bike.dummy[x, ]
+  pred.cv <- predict.cnt(testing.cv)
+  pred.cv <- pred.cv$pred.final
+  rmse.ens <- RMSE(testing.cv$cnt, pred.cv)
+})
+
+data.frame(model = c("lm", "ann", "tree", "ens"),
+          mean.rmse = c(mean(unlist(cvRMSE.lm)),
+                        mean(unlist(cvRMSE.ann)),
+                        mean(unlist(cvRMSE.tree)),
+                        mean(unlist(cvRMSE.ens))))
+```
+As the table above, the ensemble model has the lowest mean RMSE from the cross validation, meaning it does improved the overall performance.
+
+
+
+
+
